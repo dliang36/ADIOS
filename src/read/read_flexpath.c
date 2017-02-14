@@ -1735,7 +1735,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
     if (nsteps != 1) {
 	adios_error (err_invalid_timestep,
                      "Only one step can be read from a stream at a time. "
-                     "You requested % steps in adios_schedule_read()\n",
+                     "You requested %d steps in adios_schedule_read()\n",
 		     nsteps);
         return err_invalid_timestep;
     }

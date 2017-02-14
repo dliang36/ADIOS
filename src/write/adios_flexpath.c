@@ -1227,6 +1227,7 @@ drop_queued_data(FlexpathWriteFileData *fileData, int timestep)
     EVsubmit_general(fileData->dropSource, dropMsg, drop_evgroup_msg_free, fileData->attrs);
     //EVsubmit_general(fileData->dropSource, dropMsg, NULL, fileData->attrs);
     // Will have to change when not using ctrl thread.
+    /*TODO: REMOVE THE CONDITION WAIT IN THIS EXECUTION PATH*/
     CMCondition_wait(flexpathWriteData.cm,  wait);
     
     fileData->readerStep++;
@@ -1586,6 +1587,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     FlexpathWriteFileData *fileData = malloc(sizeof(FlexpathWriteFileData));
     mem_check(fileData, "fileData");
+    //Sets some variables, prefer a call to calloc myself
     memset(fileData, 0, sizeof(FlexpathWriteFileData));
     fp_verbose_init(fileData);
 
@@ -1597,8 +1599,6 @@ adios_flexpath_open(struct adios_file_struct *fd,
    
     // setup step state
     fileData->attrs = create_attr_list();
-    fileData->openCount = 0;
-    //fileData->readerStep = 0;
 
     pthread_mutex_init(&fileData->controlMutex, NULL);
     pthread_mutex_init(&fileData->dataMutex, NULL);

@@ -275,6 +275,7 @@ static FMStructDescRec data_format_list[] =
     {NULL, NULL, 0, NULL}
 };
 
+
 static FMStructDescRec op_format_list[] =
 {
     {"op_msg", op_file_field_list, sizeof(op_msg), NULL},
