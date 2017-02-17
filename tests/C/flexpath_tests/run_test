@@ -86,8 +86,8 @@ if [ "$writer_mode" = "debug" ]; then
 	echo "	(mpirun -q -n $wr xterm -e lldb ./$writer_prog -- -t $transport 2>&1 1>/dev/null) & writer_pid=$!"
 	(mpirun -q -n $nw xterm -e lldb ./$writer_prog -- -t $transport 2>&1 1>/dev/null) & writer_pid=$!
     elif [ "$debugger" = "gdb" ]; then
-	echo "(mpirun -q -n $nw xterm -e gdb -args ./$writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!"
-	(mpirun -q -n $wr xterm -e gdb -args ./$writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!
+	echo "(mpirun -n $nw xterm -e gdb -args ./$writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!"
+	(mpirun -n $wr xterm -e gdb -args ./$writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!
     else 
 	echo "Unknown debugger \"$debugger\"";
     fi
@@ -95,8 +95,8 @@ elif [ "$writer_mode" = "valgrind" ]; then
     echo "Doing     (mpirun -q -n $nw xterm -hold -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!"
     (mpirun -q -n $nw xterm -hold -sl 10000 -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!
 else
-    echo "Doing        (mpirun -q -n $nw $writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!"
-    (mpirun -q -n $nw $writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!
+    echo "Doing        (mpirun -n $nw ./$writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!"
+    (mpirun -n $nw ./$writer_prog -t $transport 2>&1 1>/dev/null) & writer_pid=$!
 fi
 
 
@@ -114,7 +114,7 @@ if [ "$reader_mode" = "debug" ]; then
 elif [ "$reader_mode" = "valgrind" ]; then 
     (mpirun -q -n $nr xterm -hold -sl 10000 -e valgrind --tool=memcheck ./$reader_prog -t $transport ) & reader_pid=$!
 else
-    (mpirun -q -n $nr ./$reader_prog -t $transport 2>&1 1>/dev/null) & reader_pid=$!
+    (mpirun -n $nr ./$reader_prog -t $transport 2>&1 1>/dev/null) & reader_pid=$!
 fi
 
 # in the background, sleep for timeout secs then kill that processes

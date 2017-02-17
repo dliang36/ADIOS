@@ -1414,6 +1414,8 @@ adios_read_flexpath_open(const char * fname,
 	build_bridge(&fp->bridges[writer_rank]);
 	fp->writer_coordinator = writer_rank;
     }
+    //EVstore Setup
+
 
     // requesting initial data.
     fp_verbose(fp, "sending open msg in read_open\n");
