@@ -572,8 +572,54 @@ get_var_offsets(struct adios_var_struct *v,
     }
     return ndims;
 }
+static char extern_string[] = "\
+    int get_reader_timestep(cod_exec_context ec);\n\
+    void gather_EVgroup(cod_exec_context ec);\n\
+";
+
+static cod_extern_entry extern_map[] = {
+    {"get_reader_timestep", (void*)(long)cod_get_reader_timestep},
+    {"gather_EVgroup", (void*)(long)cod_gather_EVgroup},
+    {(void*)0, (void*)0}
+};
 
 // creates multiqueue function to handle ctrl messages for given bridge stones 
+char * multiqueue_action = "{\n\
+    static int lowest_timestamp = 0;\n\
+    attr_list attrs;\n\
+    if (EVcount_read_request() > 0) {\n\
+        read_request * msg = EVdata_read_request(0);\n\
+        if(msg.var_count == 0) {\n\
+            if(EVcount_evgroup() > 0) {\n\
+                evgroup *g = EVdata_evgroup(0); \n\
+                g->condition = msg->condition;\n\
+                EVsubmit(msg->process_return_id+1, g);\n\
+                EVdiscard_evgroup(0);\n\
+                EVdiscard_read_request(0);\n\
+            }\n\
+            else {\n\
+                gather_EVgroup();\n\
+            }\n\
+        }\n\
+        else {\n\
+            int timestep = get_reader_timestep();\n\
+            if(msg.timestep_requested > timestep) {\n\
+                if(EVcount_evgroup() > 0) {\n\
+                    evgroup *g = EVdata_evgroup(0); \n\
+                    g->condition = msg->condition;\n\
+                    EVsubmit(msg->process_return_id+1, g);\n\
+                    EVdiscard_evgroup(0);\n\
+                    EVdiscard_read_request(0);\n\
+                }\n\
+
+            
+            
+    if (EVcount_evgroup() > 0) {\n\
+        evgroup *g = EVdata_evgroup(0); \n\
+        g->condition = c->condition;\n\
+        EVsubmit(c->process_id+1, g);\n\
+
+
 char *multiqueue_action = "{\n\
     int found = 0;\n\
     int flush_data_count = 0; \n\
@@ -1527,7 +1573,7 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
 extern void 
 adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method) 
 {
-    setenv("CMSelfFormats", "1", 1);
+    //setenv("CMSelfFormats", "1", 1);
     // global data structure creation
     flexpathWriteData.rank = -1;
     flexpathWriteData.openFiles = NULL;
@@ -1633,6 +1679,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     MPI_Gather(sendmsg, CONTACT_LENGTH, MPI_CHAR, recv_buff, 
         CONTACT_LENGTH, MPI_CHAR, 0, (fileData->mpiComm));
 
+    //TODO: recv_buff has a small memory leak here because of register_reader_handler
     // rank 0 prints contact info to file
     if (fileData->rank == 0) {
         sprintf(writer_info_filename, "%s_%s", fd->name, "writer_info.txt");
@@ -1670,12 +1717,14 @@ adios_flexpath_open(struct adios_file_struct *fd,
         sscanf(&recv_buff[i*CONTACT_LENGTH], "%d:%s",&stone_num, in_contact);
 	//fprintf(stderr, "reader contact: %d:%s\n", stone_num, in_contact);
         attr_list contact_list = attr_list_from_string(in_contact);
-        fileData->bridges[i].opened = 0;
-	fileData->bridges[i].created = 0;
+        fileData->bridges[i].opened = 1;
+	fileData->bridges[i].created = 1;
         fileData->bridges[i].step = 0;
         fileData->bridges[i].theirNum = stone_num;
         fileData->bridges[i].contact = strdup(in_contact);
+
     }
+
 
     MPI_Barrier((fileData->mpiComm));
     
@@ -1705,16 +1754,12 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     //generate multiqueue function that sends formats or all data based on flush msg
 
-    FMStructDescList queue_list[] = {flush_format_list, 
-				     var_format_list, 
-				     op_format_list, 
-				     evgroup_format_list,
-				     drop_evgroup_msg_format_list,
+    FMStructDescList queue_list[] = {evgroup_format_list,
 				     data_format_list,
-				     update_step_msg_format_list,
 				     NULL};
-    char* q_action_spec = create_multityped_action_spec(queue_list, 
-							multiqueue_action); 
+    char* q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action); 
+
+
     fileData->multi_action = EVassoc_multi_action(flexpathWriteData.cm, 
 						  fileData->multiStone, 
 						  q_action_spec, 
@@ -1723,34 +1768,45 @@ adios_flexpath_open(struct adios_file_struct *fd,
 						  fileData->multiStone, 
 						  fileData->fm->format);						 
 
-    fileData->opSource = EVcreate_submit_handle(flexpathWriteData.cm, 
-						fileData->multiStone, 
-						op_format_list); 
-    
     fileData->offsetSource = EVcreate_submit_handle(flexpathWriteData.cm, 
 						    fileData->multiStone, 
 						    evgroup_format_list);
-    fileData->dropSource = EVcreate_submit_handle(flexpathWriteData.cm, 
-						  fileData->multiStone, 
-						  drop_evgroup_msg_format_list);
-    
+
     fileData->stepSource = EVcreate_submit_handle(flexpathWriteData.cm,
 						  fileData->multiStone, 
 						  update_step_msg_format_list);
 
+
     EVassoc_terminal_action(flexpathWriteData.cm, fileData->sinkStone, 
 			    var_format_list, var_handler, fileData);
+
     EVassoc_terminal_action(flexpathWriteData.cm, fileData->sinkStone, 
 			    op_format_list, op_handler, fileData);
+
     EVassoc_terminal_action(flexpathWriteData.cm, fileData->sinkStone, 
 			    drop_evgroup_msg_format_list, drop_evgroup_handler, fileData);
+
     EVassoc_terminal_action(flexpathWriteData.cm, fileData->sinkStone, 
-	flush_format_list, flush_handler, fileData);
+                            flush_format_list, flush_handler, fileData);
 
     //link multiqueue to sink
     EVaction_set_output(flexpathWriteData.cm, fileData->multiStone, 
         fileData->multi_action, 0, fileData->sinkStone);
 	
+    for (int i = 0; i < numBridges; i++) {
+	fileData->bridges[i].myNum = 
+	    EVcreate_bridge_action(
+		flexpathWriteData.cm, 
+		attr_list_from_string(fileData->bridges[i].contact), 
+		fileData->bridges[i].theirNum);		    
+	
+	EVaction_set_output(flexpathWriteData.cm, 
+			    fileData->multiStone, 
+			    fileData->multi_action, 
+			    i+1, 
+			    fileData->bridges[i].myNum);
+    }
+
     FMContext my_context = create_local_FMcontext();
     fileData->fm->ioFormat = register_data_format(my_context, fileData->fm->format);
     
@@ -1939,6 +1995,9 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
             }
 
             // extract dimensions for rank i from comm block
+            //block_index = which global variable
+            //i = which MPI rank
+            //send_count = size of the total number of global variables per process * numdimensions * 2
             for (i = 0; i < commsize; i++) {
                 memcpy(&all_local_dims[i*ndims], &comm_block[i*send_count + block_index], ndims * sizeof(send_block[0]));
                 memcpy(&all_offsets[i*ndims], &comm_block[i*send_count + block_index + ndims], ndims * sizeof(send_block[0]));

@@ -42,8 +42,6 @@
 
 #define CONTACT_STR_LEN 50
 
-typedef enum {DATA=1, EVGROUP, STEP } Flush_type;
-
 typedef struct _reader_register_msg {
     uint64_t writer_file;
     uint64_t reader_file;
@@ -73,6 +71,8 @@ static FMField reader_go_field_list[] =
     {"start_timestep", "integer", sizeof(int), FMOffset(reader_go_msg*, start_timestep)},
     {NULL, NULL, 0, 0}
 };
+
+
 
 typedef struct _update_step_msg{
     int step;
@@ -111,31 +111,14 @@ typedef struct _evgroup {
     global_var* vars;
 } evgroup, *evgroup_ptr;
 
-typedef struct _op_msg
-{
-    int process_id;
-    char *file_name;
-    int type; //4 = end_of_stream, 3 = init, 2 = ack, 1 = open, 0 = close,
-    int step;
-    int condition;
-} op_msg, *op_msg_ptr;
  
-typedef struct flush_msg_ {
-    Flush_type type;
-    int process_id;
-    int condition;
-    int id;
-} Flush_msg, *Flush_msg_ptr;
-
-typedef struct var_msg_ {
-    char* var_name;
-    int process_id;
-} Var_msg, *Var_msg_ptr;
-
-typedef struct read_request_msg_ {
-    char** var_name_array;
-    int var_count;
-    int process_id;
+typedef struct _reader_request_msg {
+    int     condition
+    int     timestep_requested;
+    int     process_return_id;
+    int     current_lamport_min;
+    int     var_count;
+    char**  var_name_array;
 } read_request_msg, *read_request_msg_ptr;
 
 typedef struct _complex_dummy
@@ -149,6 +132,35 @@ typedef struct _double_complex_dummy
     double r;
     double i;
 } double_complex_dummy;
+
+static FMField read_request_msg_field_list[]=
+{
+    {"condition", "integer", sizeof(int), FMOffset(read_request_msg_ptr, condition)},
+    {"timestep_requested", "integer", sizeof(int), FMOffset(read_request_msg_ptr, timestep_requested)},
+    {"process_return_id", "integer",  sizeof(int), FMOffset(read_request_msg_ptr, process_return_id)},
+    {"current_lamport_min", "integer",  sizeof(int), FMOffset(read_request_msg_ptr, current_lamport_min)},
+    {"var_count", "integer", sizeof(int), FMOffset(read_request_msg_ptr, var_count)},
+    {"var_name_array", "string[var_count]", sizeof(char *), FMOffset(read_request_msg_ptr, var_name_array)},
+    {NULL, NULL, 0, 0}
+};
+
+static FMField offset_struct_field_list[]=
+{
+    {"offsets_per_rank", "integer", sizeof(int), FMOffset(offset_struct*, offsets_per_rank)},
+    {"total_offsets", "integer", sizeof(int), FMOffset(offset_struct*, total_offsets)},
+    {"local_dimensions", "integer[total_offsets]", sizeof(uint64_t), FMOffset(offset_struct*, local_dimensions)},
+    {"local_offsets", "integer[total_offsets]", sizeof(uint64_t), FMOffset(offset_struct*, local_offsets)},
+    {"global_dimensions", "integer[offsets_per_rank]", sizeof(uint64_t), FMOffset(offset_struct*, global_dimensions)},
+    {NULL, NULL, 0, 0}
+};
+
+static FMField global_var_field_list[]=
+{
+    {"name", "string", sizeof(char*), FMOffset(global_var_ptr, name)},
+    {"noffset_structs", "integer", sizeof(int), FMOffset(global_var_ptr, noffset_structs)},
+    {"offsets", "offset_struct[noffset_structs]", sizeof(offset_struct), FMOffset(global_var_ptr, offsets)},
+    {NULL, NULL, 0, 0}
+};
 
 static FMField complex_dummy_field_list[] =
 {
@@ -172,31 +184,6 @@ static FMField update_step_msg_field_list[]=
     {NULL, NULL, 0, 0}
 };
 
-static FMField drop_evgroup_msg_field_list[]=
-{
-    {"step", "integer", sizeof(int), FMOffset(drop_evgroup_msg*, step)},
-    {"condition", "integer", sizeof(int), FMOffset(drop_evgroup_msg*, condition)},
-    {NULL, NULL, 0, 0}
-};
-
-static FMField offset_struct_field_list[]=
-{
-    {"offsets_per_rank", "integer", sizeof(int), FMOffset(offset_struct*, offsets_per_rank)},
-    {"total_offsets", "integer", sizeof(int), FMOffset(offset_struct*, total_offsets)},
-    {"local_dimensions", "integer[total_offsets]", sizeof(uint64_t), FMOffset(offset_struct*, local_dimensions)},
-    {"local_offsets", "integer[total_offsets]", sizeof(uint64_t), FMOffset(offset_struct*, local_offsets)},
-    {"global_dimensions", "integer[offsets_per_rank]", sizeof(uint64_t), FMOffset(offset_struct*, global_dimensions)},
-    {NULL, NULL, 0, 0}
-};
-
-static FMField global_var_field_list[]=
-{
-    {"name", "string", sizeof(char*), FMOffset(global_var_ptr, name)},
-    {"noffset_structs", "integer", sizeof(int), FMOffset(global_var_ptr, noffset_structs)},
-    {"offsets", "offset_struct[noffset_structs]", sizeof(offset_struct), FMOffset(global_var_ptr, offsets)},
-    {NULL, NULL, 0, 0}
-};
-
 static FMField evgroup_field_list[]=
 {
     {"condition", "integer", sizeof(int), FMOffset(evgroup_ptr, condition)},
@@ -208,32 +195,6 @@ static FMField evgroup_field_list[]=
     {NULL, NULL, 0, 0}
 };
 
-static FMField flush_field_list[] =
-{   
-    {"type", "integer", sizeof(Flush_type), FMOffset(Flush_msg_ptr, type)},
-    {"process_id", "integer", sizeof(int), FMOffset(Flush_msg_ptr, process_id)},
-    {"condition", "integer", sizeof(int), FMOffset(Flush_msg_ptr, condition)},
-    {"id", "integer", sizeof(int), FMOffset(Flush_msg_ptr, id)},
-    {NULL, NULL, 0, 0}
-};
-
-static FMField var_field_list[] =
-{
-    {"var_name", "string", sizeof(char*), FMOffset(Var_msg_ptr, var_name)},
-    {"process_id", "integer", sizeof(int), FMOffset(Var_msg_ptr, process_id)},
-    {NULL, NULL, 0, 0}
-};
-
-
-static FMField op_file_field_list[] =
-{
-    {"process_id", "integer", sizeof(int), FMOffset(op_msg_ptr, process_id)},
-    {"file_name", "string", sizeof(char*), FMOffset(op_msg_ptr, file_name)},
-    {"type", "integer", sizeof(int), FMOffset(op_msg_ptr, type)},
-    {"step", "integer", sizeof(int), FMOffset(op_msg_ptr, step)},
-    {"condition", "integer", sizeof(int), FMOffset(op_msg_ptr, condition)},
-    {NULL, NULL, 0, 0}
-};
 
 static FMStructDescRec update_step_msg_format_list[]=
 {
@@ -253,6 +214,11 @@ static FMStructDescRec offset_struct_format_list[] =
     {NULL, NULL, 0, 0}
 };
 
+static FMStructDescRec read_request_format_list[] =
+{
+    {"read_request", read_request_msg_field_list, sizeof(read_request_msg), NULL},
+    {NULL, NULL, 0, NULL}
+};
 
 static FMStructDescRec evgroup_format_list[] =
 {   
@@ -262,30 +228,12 @@ static FMStructDescRec evgroup_format_list[] =
     {NULL,NULL,0,NULL}
 };
 
-static FMStructDescRec flush_format_list[] =
-{   
-    {"flush", flush_field_list, sizeof(Flush_msg), NULL},
-    {NULL,NULL,0,NULL}
-};
- 
-static FMStructDescRec var_format_list[] =
-{
-    {"varMsg", var_field_list, sizeof(Var_msg), NULL},
-    {NULL, NULL, 0, NULL}
-};
-
 static FMStructDescRec data_format_list[] =
 {
     {"anonymous", NULL, 0, NULL},
     {NULL, NULL, 0, NULL}
 };
 
-
-static FMStructDescRec op_format_list[] =
-{
-    {"op_msg", op_file_field_list, sizeof(op_msg), NULL},
-    {NULL, NULL, 0, NULL}
-};
 
 static char *getFixedName(char *name);
 
