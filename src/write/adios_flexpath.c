@@ -220,6 +220,18 @@ append_path_name(char *path, char *name)
 }
 
 
+attr_list
+set_timestep_atom(attr_list attrs, int value)
+{
+    atom_t dst_atom = attr_atom_from_string(FP_TIMESTEP);
+    int dst;
+    if (!get_int_attr(attrs, dst_atom, &dst)) {
+        add_int_attr(attrs, dst_atom, value);
+    }
+    set_int_attr(attrs, dst_atom, value);
+    return attrs;
+}
+
 attr_list 
 set_flush_id_atom(attr_list attrs, int value) 
 {
@@ -287,12 +299,6 @@ evgroup_msg_free(void *eventData, void *clientData)
 }
 
 void
-drop_evgroup_msg_free(void *eventData, void *clientData)
-{
-    free(eventData);
-}
-
-void
 update_step_msg_free(void *eventData, void *clientData)
 {
         update_step_msg *msg = (update_step_msg*)eventData;
@@ -306,18 +312,6 @@ data_free(void* eventData, void* clientData)
     FlexpathWriteFileData* fileData = (FlexpathWriteFileData*)clientData;
     FMfree_var_rec_elements(fileData->fm->ioFormat, eventData);
     free(eventData);
-}
-
-// free op packets once EVPath is finished with them
-void 
-op_free(void* eventData, void* clientData) 
-{
-//    fp_write_log("OP", "freeing an op message\n");
-    op_msg* op = (op_msg*) eventData;
-    if (op->file_name) {
-        free(op->file_name);
-    }
-    free(op);
 }
 
 // message queue count
@@ -2019,7 +2013,6 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
         gbl_vars = NULL;
     }
     gp->num_vars = num_gbl_vars;
-    gp->step = fileData->writerStep;
     gp->vars = gbl_vars;
     //fileData->gp = gp;       
 }
@@ -2042,22 +2035,24 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     evgroup *gp = malloc(sizeof(evgroup));    
     gp->group_name = strdup(method->group->name);
     gp->process_id = fileData->rank;
+    gp->step = fileData->writerStep;
 
     if (fileData->globalCount == 0 ) {
 
 	gp->num_vars = 0;
-	gp->step = fileData->writerStep;
 	gp->vars = NULL;
-	EVsubmit_general(fileData->offsetSource, gp, evgroup_msg_free, fileData->attrs);
+	//EVsubmit_general(fileData->offsetSource, gp, evgroup_msg_free, fileData->attrs);
     } else {    
         exchange_dimension_data(fd, gp, fileData);
     }   
     
+    /*
     update_step_msg *stepmsg = malloc(sizeof(update_step_msg));
     stepmsg->finalized = 0;
     stepmsg->step = fileData->writerStep;
     stepmsg->condition = -1;
     EVsubmit_general(fileData->stepSource, stepmsg, update_step_msg_free, fileData->attrs);
+    */
     
     fileData->attrs = set_size_atom(fileData->attrs, fileData->size);
     EVsubmit_general(fileData->offsetSource, gp, evgroup_msg_free, fileData->attrs);

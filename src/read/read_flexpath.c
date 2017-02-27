@@ -188,7 +188,6 @@ flexpath_read_data* fp_read_data = NULL;
 static int 
 remove_relevant_global_data(flexpath_reader_file * fp, int timestep)
 {
-    //This ugly algorithm works...I'm pretty unhappy with it, but its late so I'll move on
     global_metadata_ptr * curr = fp->global_info;
     global_metadata_ptr * prev = NULL;
     int count = 0;
@@ -205,7 +204,7 @@ remove_relevant_global_data(flexpath_reader_file * fp, int timestep)
             else
             {
                 prev->next = curr->next;
-                temp = prev;
+                temp = prev->next;
             }
 
             free_evgroup(curr->metadata);
@@ -877,28 +876,24 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     if (fp->group_name == NULL) {
         fp->group_name = strdup(msg->group_name);
     }
-    fp->gp = msg;
-    int i;
-    for (i = 0; i<msg->num_vars; i++) {
-	global_var *gblvar = &msg->vars[i];
-	flexpath_var *fpvar = find_fp_var(fp->var_list, gblvar->name);
-	if (fpvar) {
-	    offset_struct *offset = &gblvar->offsets[0];
-	    uint64_t *local_dimensions = offset->local_dimensions;
-	    uint64_t *local_offsets = offset->local_offsets;
-	    uint64_t *global_dimensions = offset->global_dimensions;
+    
+    global_metadata_ptr curr = fp->global_info;
+    while(curr && curr->next)
+        curr = curr->next;
 
-	    fpvar->ndims = offset->offsets_per_rank;
-	    fpvar->global_dims = malloc(sizeof(uint64_t)*fpvar->ndims);
-	    memcpy(fpvar->global_dims, global_dimensions, sizeof(uint64_t)*fpvar->ndims);
-	} else {
-	    adios_error(err_corrupted_variable,
-			"Mismatch between global variables and variables specified %s.",
-			gblvar->name);
-	    return err_corrupted_variable;
-	}
+    if(!curr)
+    {
+        fp->global_info = calloc(1, sizeof(global_metadata));
+        curr = fp->global_info;
     }
-    CMCondition_signal(fp_read_data->cm, msg->condition);
+    else
+    {
+        curr->next = calloc(1, sizeof(global_metada));
+        curr = curr->next;
+    }
+
+    curr->metadata = msg;
+    CMCondition_signal(fp_read_data->cm, fp->global_metadata_condition);
     return 0;
 }
 
@@ -1039,10 +1034,12 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
     int writer_rank;
     int flush_id;
+    int timestep;
     double data_start;
     get_double_attr(attrs, attr_atom_from_string("fp_starttime"), &data_start);
     get_int_attr(attrs, attr_atom_from_string(FP_RANK_ATTR_NAME), &writer_rank);
     get_int_attr(attrs, attr_atom_from_string("fp_flush_id"), &flush_id);
+    get_int_attr(attrs, attr_atom_from_string(FP_TIMESTEP), &timestep);
     /* fprintf(stderr, "\treader rank:%d:got data from writer:%d:step:%d\n", */
     /* 	    fp->rank, writer_rank, fp->mystep); */
     FMContext context = CMget_FMcontext(cm);
@@ -1076,11 +1073,36 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	}
 	adiosfile->nvars = var_count;
 	fp->num_vars = var_count;
+
+        //Move evgroup stuff here
+        evgroup_ptr relevant_
+
+        int i;
+        for (i = 0; i<msg->num_vars; i++) {
+            global_var *gblvar = &msg->vars[i];
+            flexpath_var *fpvar = find_fp_var(fp->var_list, gblvar->name);
+            if (fpvar) {
+                offset_struct *offset = &gblvar->offsets[0];
+                uint64_t *local_dimensions = offset->local_dimensions;
+                uint64_t *local_offsets = offset->local_offsets;
+                uint64_t *global_dimensions = offset->global_dimensions;
+
+                fpvar->ndims = offset->offsets_per_rank;
+                fpvar->global_dims = malloc(sizeof(uint64_t)*fpvar->ndims);
+                memcpy(fpvar->global_dims, global_dimensions, sizeof(uint64_t)*fpvar->ndims);
+            } else {
+                adios_error(err_corrupted_variable,
+            		"Mismatch between global variables and variables specified %s.",
+            		gblvar->name);
+                return err_corrupted_variable;
+            }
+        }
     }
 
     f = struct_list[0].field_list;
     char *curr_offset = NULL;
 
+    //This is what gives us only the scheduled variables...by picking out only the ones we need
     while (f->field_name) {
         char atom_name[200] = "";
 	char *unmangle = flexpath_unmangle(f->field_name);
@@ -1340,9 +1362,7 @@ adios_read_flexpath_open(const char * fname,
     adios_errno = 0;
     fp->stone = EValloc_stone(fp_read_data->cm);
     fp->comm = comm;
-    fp->global_metadata_condition = CMCondition_get(fp_read_data->cm, NULL);
 
-    //This happens in init too, so they don't both need to happen right? Plus open only happens once on the reading side...
     MPI_Comm_size(fp->comm, &(fp->size));
     MPI_Comm_rank(fp->comm, &(fp->rank));
 
@@ -1481,11 +1501,13 @@ adios_read_flexpath_open(const char * fname,
 
     fp->data_read = 0;
     fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
+    fp->global_metadata_condition = CMCondition_get(fp_read_data->cm, NULL);
     fp->req.num_pending = 1;
     fp->req.num_completed = 0;
 
-    //fp_verbose(fp, "sent first read msg in read_open, WAITING on condition %d\n", fp->req.condition);
-    //fp_verbose(fp, "done with WAIT in read_open\n");
+    fp_verbose(fp, "WAITING for first global metadata report on reader side %d\n", fp->global_metadata_condition);
+    CMCondition_wait(fp_read_data->cm, fp->global_metadata_condition);
+    fp_verbose(fp, "Finished with WAIT in read_open\n");
 
     fp->data_read = 0;
     // this has to change. Writer needs to have some way of

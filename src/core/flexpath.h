@@ -14,6 +14,7 @@
 #define FP_DST_ATTR_NAME "fp_dst_rank"
 #define FP_DIM_ATTR_NAME "fp_dim"
 #define FP_NDIMS_ATTR_NAME "fp_ndims"
+#define FP_TIMESTEP "fp_timestep"
 
 #define CLOSE_MSG 0
 #define OPEN_MSG 1
