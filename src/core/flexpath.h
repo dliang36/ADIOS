@@ -3,6 +3,7 @@
 
 
 #include "core/adios_logger.h"
+#include "/home/ld/Documents/SP/sos_flow/src/sos.h"
 
 #define CONTACT_LENGTH 1024
 
@@ -283,5 +284,6 @@ static FMStructDescRec op_format_list[] =
 
 static char *getFixedName(char *name);
 
+SOS_runtime *my_sos;
 
 #endif

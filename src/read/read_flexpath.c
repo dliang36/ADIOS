@@ -58,6 +58,8 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+SOS_pub *pub;
+
 typedef struct _bridge_info
 {
     EVstone bridge_stone;
@@ -721,8 +723,17 @@ send_flush_msg(flexpath_reader_file *fp, int destination, Flush_type type, int u
 	msg.condition = CMCondition_get(fp_read_data->cm, NULL);
     else
 	msg.condition = -1;
+    
+    char name[22];
+    snprintf(name, sizeof(name), "flush_msg from rank %d", fp->rank);
+    printf("%s\n", name);
+    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &destination);
+
     // maybe check to see if the bridge is create first.
     EVsubmit(fp->bridges[destination].flush_source, &msg, NULL);
+
+    SOS_announce(pub);
+    SOS_publish(pub);
     if (use_condition) {
 	fp_verbose(fp, "WAIT in send_flush_msg\n");
 	CMCondition_wait(fp_read_data->cm, msg.condition);
@@ -1206,6 +1217,21 @@ adios_read_flexpath_init_method (MPI_Comm comm, PairStruct* params)
     }
     CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader go", reader_go_field_list, sizeof(reader_go_msg));
     CMregister_handler(format, reader_go_handler, NULL);
+
+    int argc = 3;
+    char *argv[] = {"reader", "-i", "1", "-m", "1"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT 
+    //not yet:-p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
+    my_sos = SOS_init( &argc, &argv, SOS_ROLE_CLIENT, SOS_LAYER_APP);
+    SOS_SET_CONTEXT(my_sos, "read_flexpath");
+    srandom(my_sos->my_guid);
+    pub = SOS_pub_create(my_sos, "demo", SOS_NATURE_CREATE_OUTPUT);
+    strcpy (pub->prog_ver, "1.0");
+    pub->meta.channel     = 1;
+    pub->meta.nature      = SOS_NATURE_EXEC_WORK;
+    pub->meta.layer       = SOS_LAYER_APP;
+    pub->meta.pri_hint    = SOS_PRI_DEFAULT;
+    pub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
+    pub->meta.retain_hint = SOS_RETAIN_DEFAULT;
     return 0;
 }
 
@@ -1649,25 +1675,25 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
 
     for (i = 0; i<num_sendees; i++) {
-	int sendee = fp->sendees[i];
-	batchcount++;
-	total_sent++;
-		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
-		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
-	send_flush_msg(fp, sendee, DATA, 0);
+    	int sendee = fp->sendees[i];
+    	batchcount++;
+    	total_sent++;
+    		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
+    		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
+    	send_flush_msg(fp, sendee, DATA, 0);
 
-	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
-            fp->req.num_pending = batchcount;
+    	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
+                fp->req.num_pending = batchcount;
 
-	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
-            CMCondition_wait(fp_read_data->cm, fp->req.condition);
-	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
-	    fp->req.num_completed = 0;
-	    //fp->req.num_pending = 0;
-	    //total_sent = 0;
-            batchcount = 0;
-            fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
-	}
+    	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
+                CMCondition_wait(fp_read_data->cm, fp->req.condition);
+    	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
+    	    fp->req.num_completed = 0;
+    	    //fp->req.num_pending = 0;
+    	    //total_sent = 0;
+                batchcount = 0;
+                fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
+    	}
 
     }
 
