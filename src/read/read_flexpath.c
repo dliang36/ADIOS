@@ -58,6 +58,8 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+SOS_pub *pub;
+
 typedef struct _bridge_info
 {
     EVstone bridge_stone;
@@ -154,6 +156,7 @@ typedef struct _flexpath_reader_file
     int mystep;
     int num_sendees;
     int *sendees;
+    read_request_msg *var_read_requests;
 
     uint64_t data_read; // for perf measurements.
     double time_in; // for perf measurements.
@@ -659,7 +662,8 @@ send_open_msg(flexpath_reader_file *fp, int destination)
     int cond = CMCondition_get(fp_read_data->cm, NULL);
     msg.condition = cond;
 
-    fp_verbose(fp, "sending open msg, WAITING on response\n");
+    fp_verbose(fp, "sending open msg, my rank %d, filename %s, step %d, cond %d WAITING on response\n", msg.process_id, msg.file_name,
+               msg.step, msg.condition);
     EVsubmit(fp->bridges[destination].op_source, &msg, NULL);
     CMCondition_wait(fp_read_data->cm, cond);
     fp_verbose(fp, "WAIT finished, setting opened to 1, destination %d\n", destination);
@@ -720,8 +724,17 @@ send_flush_msg(flexpath_reader_file *fp, int destination, Flush_type type, int u
 	msg.condition = CMCondition_get(fp_read_data->cm, NULL);
     else
 	msg.condition = -1;
+    
+    char name[22];
+    snprintf(name, sizeof(name), "flush_msg from rank %d", fp->rank);
+    printf("%s\n", name);
+    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &destination);
+
     // maybe check to see if the bridge is create first.
     EVsubmit(fp->bridges[destination].flush_source, &msg, NULL);
+
+    SOS_announce(pub);
+    SOS_publish(pub);
     if (use_condition) {
 	fp_verbose(fp, "WAIT in send_flush_msg\n");
 	CMCondition_wait(fp_read_data->cm, msg.condition);
@@ -730,20 +743,31 @@ send_flush_msg(flexpath_reader_file *fp, int destination, Flush_type type, int u
 }
 
 void
-send_var_message(flexpath_reader_file *fp, int destination, char *varname)
+add_var_to_read_message(flexpath_reader_file *fp, int destination, char *varname)
 {
         int i = 0;
         int found = 0;
+        int index = -1;
         for (i=0; i<fp->num_sendees; i++) {
             if (fp->sendees[i]==destination) {
-                found=1;
+                index = i;
                 break;
             }
         }
-        if (!found) {
+        if (index == -1) {
             fp->num_sendees+=1;
             fp->sendees=realloc(fp->sendees, fp->num_sendees*sizeof(int));
+            fp->var_read_requests=realloc(fp->var_read_requests, fp->num_sendees*sizeof(read_request_msg));
             fp->sendees[fp->num_sendees-1] = destination;
+            fp->var_read_requests[fp->num_sendees-1].process_id = fp->rank;
+            fp->var_read_requests[fp->num_sendees-1].var_name_array = malloc(sizeof(char*));
+            fp->var_read_requests[fp->num_sendees-1].var_name_array[0] = strdup(varname);
+            fp->var_read_requests[fp->num_sendees-1].var_count = 1;
+        } else {
+            read_request_msg_ptr msg = &(fp->var_read_requests[index]);
+            msg->var_name_array = realloc(msg->var_name_array, sizeof(char*)*(msg->var_count +1));
+            msg->var_name_array[msg->var_count] = strdup(varname);
+            msg->var_count++;
         }
         if (!fp->bridges[destination].created) {
             build_bridge(&(fp->bridges[destination]));
@@ -753,10 +777,6 @@ send_var_message(flexpath_reader_file *fp, int destination, char *varname)
 	    fp->bridges[destination].opened = 1;
 	    send_open_msg(fp, destination);
 	}
-	Var_msg var;
-	var.process_id = fp->rank;
-	var.var_name = varname;
-	EVsubmit(fp->bridges[destination].var_source, &var, NULL);
 }
 
 /********** EVPath Handlers **********/
@@ -1149,6 +1169,14 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 
 /********** Core ADIOS Read functions. **********/
 
+extern void
+reader_go_handler(CManager cm, CMConnection conn, void *vmsg, void *client_data, attr_list attrs)
+{
+    reader_go_msg *msg = (reader_go_msg *)vmsg;
+    flexpath_reader_file* fp = (flexpath_reader_file *)msg->reader_file;
+    CMCondition_signal(cm, fp->req.condition);
+}
+
 /*
  * Gathers basic MPI information; sets up reader CM.
  */
@@ -1195,6 +1223,23 @@ adios_read_flexpath_init_method (MPI_Comm comm, PairStruct* params)
 	fprintf(stderr, "reader %d failed to fork comm_thread.\n", fp_read_data->rank);
 	/*log_debug( "forked\n");*/
     }
+    CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader go", reader_go_field_list, sizeof(reader_go_msg));
+    CMregister_handler(format, reader_go_handler, NULL);
+
+    int argc = 3;
+    char *argv[] = {"reader", "-i", "1", "-m", "1"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT 
+    //not yet:-p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
+    my_sos = SOS_init( &argc, &argv, SOS_ROLE_CLIENT, SOS_LAYER_APP);
+    SOS_SET_CONTEXT(my_sos, "read_flexpath");
+    srandom(my_sos->my_guid);
+    pub = SOS_pub_create(my_sos, "demo", SOS_NATURE_CREATE_OUTPUT);
+    strcpy (pub->prog_ver, "1.0");
+    pub->meta.channel     = 1;
+    pub->meta.nature      = SOS_NATURE_EXEC_WORK;
+    pub->meta.layer       = SOS_LAYER_APP;
+    pub->meta.pri_hint    = SOS_PRI_DEFAULT;
+    pub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
+    pub->meta.retain_hint = SOS_RETAIN_DEFAULT;
     return 0;
 }
 
@@ -1205,6 +1250,28 @@ adios_read_flexpath_open_file(const char * fname, MPI_Comm comm)
                  "FLEXPATH staging method does not support file mode for reading. "
                  "Use adios_read_open() to open a staged dataset.\n");
     return NULL;
+}
+
+char *
+get_writer_contact_info_filesystem(const char *fname)
+{
+    char writer_info_filename[200];
+
+    sprintf(writer_info_filename, "%s_%s", fname, WRITER_CONTACT_FILE);
+
+    FILE *fp_in = fopen(writer_info_filename, "r");
+    while (!fp_in) {
+        //CMsleep(fp_read_data->cm, 1);
+        fp_in = fopen(writer_info_filename, "r");
+    }
+    struct stat buf;
+    fstat(fileno(fp_in), &buf);
+    int size = buf.st_size;
+    
+    char *buffer = malloc(size);
+    fread(buffer, size, 1, fp_in);
+    fclose(fp_in);
+    return buffer;
 }
 
 /*
@@ -1266,19 +1333,6 @@ adios_read_flexpath_open(const char * fname,
 				raw_handler,
 				adiosfile);
 
-    /* Gather the contact info from the other readers
-       and write it to a file. Create a ready file so
-       that the writer knows it can parse this file. */
-    char writer_ready_filename[200];
-    char writer_info_filename[200];
-    char reader_ready_filename[200];
-    char reader_info_filename[200];
-
-    sprintf(reader_ready_filename, "%s_%s", fname, READER_READY_FILE);
-    sprintf(reader_info_filename, "%s_%s", fname, READER_CONTACT_FILE);
-    sprintf(writer_ready_filename, "%s_%s", fname, WRITER_READY_FILE);
-    sprintf(writer_info_filename, "%s_%s", fname, WRITER_CONTACT_FILE);
-
     char *string_list;
     char data_contact_info[CONTACT_LENGTH];
     string_list = attr_list_to_string(CMget_contact_list(fp_read_data->cm));
@@ -1287,75 +1341,90 @@ adios_read_flexpath_open(const char * fname,
 
     char * recvbuf;
     if (fp->rank == 0) {
+        char *contact_info;
 	recvbuf = (char*)malloc(sizeof(char)*CONTACT_LENGTH*(fp->size));
-    }
+        MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
+                   CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
 
-    MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
-	       CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
+        contact_info = get_writer_contact_info_filesystem(fname);
+        
+        char in_contact[CONTACT_LENGTH] = "";
+        int num_bridges = 0;
+        int their_stone;
+        int return_condition;
 
-    if (fp->rank == 0) {
-	// print our own contact information
-	FILE * fp_out = fopen(reader_info_filename, "w");
-	int i;
-	if (!fp_out) {
-	    adios_error(err_file_open_error,
-			"File for contact info could not be opened for writing.\n");
-	    exit(1);
+        char *send_buffer = malloc(CONTACT_LENGTH);
+        void *writer_filedata;
+        char *point = contact_info;
+        sscanf(point, "%d\n", &return_condition);
+        point = index(point, '\n') + 1;
+        sscanf(point, "%p\n", &writer_filedata);
+        point = index(point, '\n') + 1;
+        while (point) {
+            sscanf(point, "%d:%[^\t\n]", &their_stone, in_contact);
+            point = index(point, '\n'); if (point) point++;
+            fp->bridges = realloc(fp->bridges,
+                                  sizeof(bridge_info) * (num_bridges+1));
+            send_buffer = realloc(send_buffer, (num_bridges+1)*CONTACT_LENGTH);
+            fp->bridges[num_bridges].their_num = their_stone;
+            fp->bridges[num_bridges].contact = strdup(in_contact);
+            sprintf(&send_buffer[num_bridges*CONTACT_LENGTH], "%d:%s", their_stone, in_contact);
+            fp->bridges[num_bridges].created = 0;
+            fp->bridges[num_bridges].step = 0;
+            fp->bridges[num_bridges].opened = 0;
+            fp->bridges[num_bridges].scheduled = 0;
+            num_bridges++;
+        }
+        fp->num_bridges = num_bridges;
+
+        // broadcast writer contact info to all reader ranks
+        MPI_Bcast(&fp->num_bridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        
+        MPI_Bcast(send_buffer, fp->num_bridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
+        
+	// prepare to send all ranks contact info to writer root
+        reader_register_msg reader_register;
+        reader_register.condition = return_condition;
+        reader_register.writer_file = (uint64_t) writer_filedata;
+        reader_register.reader_file = (uint64_t) fp;
+        reader_register.contact_count = fp->size;
+        reader_register.contacts = malloc(fp->size * sizeof(char*));
+	for (int i=0; i<fp->size; i++) {
+            reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
-	for (i=0; i<fp->size; i++) {
-	    fprintf(fp_out,"%s\n", &recvbuf[i*CONTACT_LENGTH]);
-	}
-	fclose(fp_out);
+        CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
+        attr_list writer_rank0_contact = attr_list_from_string(fp->bridges[0].contact);
+        CMConnection conn = CMget_conn (fp_read_data->cm, writer_rank0_contact);
+        CMwrite(conn, format, &reader_register);
 	free(recvbuf);
+        fp->req.condition = CMCondition_get(fp_read_data->cm, conn);
+        /*  loosing connection here.  Close it later */
 
-	FILE * read_ready = fopen(reader_ready_filename, "w");
-	fprintf(read_ready, "ready");
-	fclose(read_ready);
-    }
-    fp_verbose(fp, "waiting on First barrier in OPEN\n");
-    MPI_Barrier(fp->comm);
-    fp_verbose(fp, "done with First barrier in OPEN\n");
-
-    FILE * fp_in = fopen(writer_ready_filename,"r");
-    while (!fp_in) {
-	//CMsleep(fp_read_data->cm, 1);
-	fp_in = fopen(writer_ready_filename, "r");
-    }
-    fclose(fp_in);
-
-    fp_in = fopen(writer_info_filename, "r");
-    while (!fp_in) {
-	//CMsleep(fp_read_data->cm, 1);
-	fp_in = fopen(writer_info_filename, "r");
-    }
-
-    char in_contact[CONTACT_LENGTH] = "";
-    //fp->bridges = malloc(sizeof(bridge_info));
-    int num_bridges = 0;
-    int their_stone;
-
-    // change to read all numbers, dont create stones, turn bridge array into linked list
-    while (fscanf(fp_in, "%d:%s", &their_stone, in_contact) != EOF) {
-	//fprintf(stderr, "writer contact: %d:%s\n", their_stone, in_contact);
-	fp->bridges = realloc(fp->bridges,
-					  sizeof(bridge_info) * (num_bridges+1));
-	fp->bridges[num_bridges].their_num = their_stone;
-	fp->bridges[num_bridges].contact = strdup(in_contact);
-	fp->bridges[num_bridges].created = 0;
-	fp->bridges[num_bridges].step = 0;
-	fp->bridges[num_bridges].opened = 0;
-	fp->bridges[num_bridges].scheduled = 0;
-	num_bridges++;
-    }
-    fclose(fp_in);
-    fp->num_bridges = num_bridges;
-    // clean up of writer's files
-    fp_verbose(fp, "waiting on second barrier in OPEN\n");
-    MPI_Barrier(fp->comm);
-    fp_verbose(fp, "done with second barrier in OPEN\n");
-    if (fp->rank == 0) {
-	unlink(writer_info_filename);
-	unlink(writer_ready_filename);
+        /* wait for "go" from writer */
+        fp_verbose(fp, "waiting for go message in read_open, WAITING, condition %d\n", fp->req.condition);
+        CMCondition_wait(fp_read_data->cm, fp->req.condition);
+        MPI_Barrier(MPI_COMM_WORLD);
+    } else {
+        /* not rank 0 */
+        char *this_side_contact_buffer;
+        MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
+                   CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
+        MPI_Bcast(&fp->num_bridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        this_side_contact_buffer = malloc(fp->num_bridges*CONTACT_LENGTH);
+        MPI_Bcast(this_side_contact_buffer, fp->num_bridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
+        fp->bridges = malloc(sizeof(bridge_info) * fp->num_bridges);
+        for (int i = 0; i < fp->num_bridges; i++) {
+            int their_stone;
+            char in_contact[CONTACT_LENGTH];
+            sscanf(&this_side_contact_buffer[i*CONTACT_LENGTH], "%d:%s", &their_stone, in_contact);
+            fp->bridges[i].their_num = their_stone;
+            fp->bridges[i].contact = strdup(in_contact);
+            fp->bridges[i].created = 0;
+            fp->bridges[i].step = 0;
+            fp->bridges[i].opened = 0;
+            fp->bridges[i].scheduled = 0;
+        }
+        MPI_Barrier(MPI_COMM_WORLD);
     }
 
     adiosfile->fh = (uint64_t)fp;
@@ -1364,9 +1433,9 @@ adios_read_flexpath_open(const char * fname,
     /* Init with a writer to get initial scalar
        data so we can handle inq_var calls and
        also populate the ADIOS_FILE struct. */
-    if (fp->size < num_bridges) {
-    	int mystart = (num_bridges/fp->size) * fp->rank;
-    	int myend = (num_bridges/fp->size) * (fp->rank+1);
+    if (fp->size < fp->num_bridges) {
+    	int mystart = (fp->num_bridges/fp->size) * fp->rank;
+    	int myend = (fp->num_bridges/fp->size) * (fp->rank+1);
     	fp->writer_coordinator = mystart;
     	int z;
     	for (z=mystart; z<myend; z++) {
@@ -1374,7 +1443,7 @@ adios_read_flexpath_open(const char * fname,
     	}
     }
     else {
-	int writer_rank = fp->rank % num_bridges;
+	int writer_rank = fp->rank % fp->num_bridges;
 	build_bridge(&fp->bridges[writer_rank]);
 	fp->writer_coordinator = writer_rank;
     }
@@ -1389,7 +1458,7 @@ adios_read_flexpath_open(const char * fname,
     fp->req.num_pending = 1;
     fp->req.num_completed = 0;
     send_flush_msg(fp, fp->writer_coordinator, DATA, 0);
-    fp_verbose(fp, "sent flush msg in read_open, WAITING\n");
+    fp_verbose(fp, "sent flush msg in read_open, WAITING on condition %d\n", fp->req.condition);
     CMCondition_wait(fp_read_data->cm, fp->req.condition);
     fp_verbose(fp, "done with WAIT in read_open\n");
 
@@ -1613,25 +1682,25 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
 
     for (i = 0; i<num_sendees; i++) {
-	int sendee = fp->sendees[i];
-	batchcount++;
-	total_sent++;
-		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
-		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
-	send_flush_msg(fp, sendee, DATA, 0);
+    	int sendee = fp->sendees[i];
+    	batchcount++;
+    	total_sent++;
+    		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
+    		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
+    	send_flush_msg(fp, sendee, DATA, 0);
 
-	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
-            fp->req.num_pending = batchcount;
+    	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
+                fp->req.num_pending = batchcount;
 
-	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
-            CMCondition_wait(fp_read_data->cm, fp->req.condition);
-	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
-	    fp->req.num_completed = 0;
-	    //fp->req.num_pending = 0;
-	    //total_sent = 0;
-            batchcount = 0;
-            fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
-	}
+    	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
+                CMCondition_wait(fp_read_data->cm, fp->req.condition);
+    	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
+    	    fp->req.num_completed = 0;
+    	    //fp->req.num_pending = 0;
+    	    //total_sent = 0;
+                batchcount = 0;
+                fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
+    	}
 
     }
 
@@ -1734,7 +1803,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
 			"No process exists on the writer side matching the index.\n");
 	    return err_out_of_bound;
 	}
-	send_var_message(fp, writer_index, fpvar->varname);
+	add_var_to_read_message(fp, writer_index, fpvar->varname);
 	break;
     }
     case ADIOS_SELECTION_BOUNDINGBOX:
@@ -1775,7 +1844,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
 
                     all_disp = realloc(all_disp, sizeof(array_displacements)*need_count);
                     all_disp[need_count-1] = *displ;
-                    send_var_message(fp, j, fpvar->varname);
+                    add_var_to_read_message(fp, j, fpvar->varname);
                 }
             }
             fpvar->displ = all_disp;
