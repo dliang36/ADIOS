@@ -18,6 +18,9 @@ tests/C/query/alacrity/adios_read_ext_test
 tests/C/query/alacrity/adios_show_bp_file
 tests/C/query/fastbit/fastbit_tests
 utils/fastbit/adios_index_fastbit
+build/
+examples/C/time_aggregation/time_aggregation_no_xml
+tests/C/flexpath_tests/1D_arr_global/build/
 
 
 # Object files
