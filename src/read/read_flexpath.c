@@ -58,6 +58,13 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+typedef struct _timestep_condition
+{
+    int timestep;
+    int condition;
+    struct _timestep_condition * next;
+} timestep_condition, *timestep_condition_ptr;
+
 typedef struct _global_metadata
 {
     evgroup * metadata;
@@ -152,7 +159,7 @@ typedef struct _flexpath_reader_file
     int num_vars;
     flexpath_var *var_list;
     global_metadata_ptr global_info;
-    int global_metadata_condition;
+    timestep_condition_ptr global_metadata_conditions;
 
     int writer_finalized;
     int last_writer_step;
@@ -183,6 +190,87 @@ typedef struct _local_read_data
 flexpath_read_data* fp_read_data = NULL;
 
 /********** Helper functions. **********/
+
+//Need to make sure we don't already have the condition as it may come early
+//We need to do this because evgroup messages can come early, but we need to wait for late ones
+static int 
+internal_flexpath_get_global_metadata_condition(flexpath_reader_file * fp, int timestep)
+{
+    //First we check to see if we already set the condition for the timestep
+    timestep_condition_ptr curr = fp->global_metadata_conditions;
+    while(curr)
+    {
+        if(curr->timestep == timestep)
+            return curr->condition;
+        
+        curr = curr->next;
+    }
+
+    //If we didn't we are going to set it now
+    curr = fp->global_metadata_conditions;
+    while(curr && curr->next) curr = curr->next;
+    
+    if(!curr)
+    {
+        fp->global_metadata_conditions = calloc(1, sizeof(timestep_condition));
+        curr = fp->global_metadata_condition;
+    }
+    else
+    {
+        curr->next = calloc(1, sizeof(timestep_condition));
+        curr = curr->next;
+    }
+    
+    curr->timestep = timestep;
+    curr->condition = CMCondition_get(fp_read_data->cm, NULL);
+
+    return curr->condition;
+}
+
+
+static int
+internal_flexpath_signal_global_metadata_condition(flexpath_reader_file * fp, int timestep)
+{
+    int sig_condition = internal_flexpath_get_global_metadata_condition(fp, timestep);
+    CMCondition_signal(fp_read_data->cm, sig_condition);
+    return sig_condition;
+}
+
+static void 
+internal_flexpath_remove_obsolete_globe_conditions(flexpath_reader_file * fp, int timestep)
+{
+    timestep_condition_ptr curr = fp->global_metadata_conditions;
+    timestep_condition_ptr prev = NULL;
+    while(curr)
+    {
+        if(curr->timestep < timestep)
+        {
+            timestep_condition_ptr temp;
+            //Two cases: front of the linked list and not front of the linked list 
+            if(!prev)
+                fp->global_metadata_conditions = curr->next;
+            else
+                prev->next = curr->next;
+
+            temp = curr->next;
+            free(curr);
+            curr = temp;
+        }
+        else
+        {
+            curr = curr->next;
+        }
+    }
+}
+
+static int
+internal_flexpath_wait_global_metadata_condition(flexpath_reader_file * fp, int timestep)
+{
+    //Remove old conditions because they will be sent in order and we wait for them in order
+    internal_flexpath_remove_obsolete_globe_conditions(fp, timestep);    
+    int sig_condition = internal_flexpath_get_global_metadata_condition(fp, timestep);
+    CMCondition_wait(fp_read_data->cm, sig_condition);
+}
 
 //Return the number of elements removed
 static int 
@@ -240,10 +328,9 @@ find_relevant_global_data(flexpath_reader_file * fp)
     if(!curr)
     {
         fp_verbose(fp, "About to wait for global metadata for timestep: %d", reader_step);
-        CMCondition_wait(fp_read_data->cm, fp->global_metadata_condition);
+        internal_flexpath_wait_global_metadata_condition(fp, reader_step);
         fp_verbose(fp, "Exiting wait for global metadata for timestep: %d", reader_step);
-        fp->global_metadata_condition = CMCondition_get(fp_read_data->cm, NULL);
-
+        
         curr = fp->global_info;
         while(curr != NULL)
         {
@@ -893,7 +980,7 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     }
 
     curr->metadata = msg;
-    CMCondition_signal(fp_read_data->cm, fp->global_metadata_condition);
+    internal_flexpath_signal_global_metadata_condition(fp, msg->step);
     return 0;
 }
 
@@ -1501,12 +1588,12 @@ adios_read_flexpath_open(const char * fname,
 
     fp->data_read = 0;
     fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
-    fp->global_metadata_condition = CMCondition_get(fp_read_data->cm, NULL);
+    internal_flexpath_get_global_metadata_condition(fp, fp->mystep);
     fp->req.num_pending = 1;
     fp->req.num_completed = 0;
 
     fp_verbose(fp, "WAITING for first global metadata report on reader side %d\n", fp->global_metadata_condition);
-    CMCondition_wait(fp_read_data->cm, fp->global_metadata_condition);
+    internal_flexpath_wait_global_metadata_condition(fp, fp->mystep);
     fp_verbose(fp, "Finished with WAIT in read_open\n");
 
     fp->data_read = 0;

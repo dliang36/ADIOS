@@ -1980,13 +1980,15 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
         struct adios_var_struct * list = pg->vars_written;
         while (list) {
             int i, ndims = get_dim_count(list);
-            uint64_t *all_offsets = malloc(ndims*commsize*sizeof(uint64_t));
-            uint64_t *all_local_dims = malloc(ndims*commsize*sizeof(uint64_t));
-                
+
             if (ndims == 0) {
                 list=list->next;
                 continue;
             }
+
+            uint64_t *all_offsets = malloc(ndims*commsize*sizeof(uint64_t));
+            uint64_t *all_local_dims = malloc(ndims*commsize*sizeof(uint64_t));
+                
 
             // extract dimensions for rank i from comm block
             //block_index = which global variable
