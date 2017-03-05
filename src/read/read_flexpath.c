@@ -53,7 +53,7 @@
 #include "dmalloc.h"
 #endif
 
-#define FP_BATCH_SIZE 4
+#define FP_BATCH_SIZE 100
 
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
@@ -161,6 +161,7 @@ typedef struct _flexpath_reader_file
     int writer_coordinator;
 
     int num_vars;
+    char ** var_namelist;
     timestep_seperated_var_list * ts_var_list;
     global_metadata_ptr global_info;
     evgroup * current_global_info;
@@ -196,6 +197,21 @@ typedef struct _local_read_data
 flexpath_read_data* fp_read_data = NULL;
 
 /********** Helper functions. **********/
+
+static timestep_seperated_var_list *
+find_var_list(flexpath_reader_file * fp, int timestep)
+{
+    timestep_seperated_var_list * temp = fp->ts_var_list;
+    while(temp)
+    {
+        if(temp->timestep == timestep)
+            break;
+
+        temp = temp->next;
+    }
+    return temp;
+}
+
 
 static void
 create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
@@ -272,7 +288,6 @@ cleanup_flexpath_vars(flexpath_reader_file * fp, int timestep)
 
 }
 
-
 //Return the number of elements removed
 static int 
 remove_relevant_global_data(flexpath_reader_file * fp, int timestep)
@@ -312,20 +327,22 @@ remove_relevant_global_data(flexpath_reader_file * fp, int timestep)
 
 }
 
-        
 static evgroup * 
 find_relevant_global_data(flexpath_reader_file * fp)
 {
     global_metadata_ptr curr = fp->global_info;
     int reader_step = fp->mystep;
-    if(!curr || curr->metadata->step != reader_step)
+    while(curr)
     {
-        fprintf(stderr, "Error: evgroup queue has been messed up!\n")
-        if(!curr)
-            fprintf(stderr, "Nothing in the queue, when there should be something!\n");
-        else
-            fprintf(stderr, "Timesteps don't match!  Front of queue: %d\t\tReader timestep: %d\n", curr->metadata->step, reader_step);
+        if(curr->metadata->step == reader_step)
+            break;
 
+        curr = curr->next;
+    }
+
+    if(!curr)
+    {
+        fprintf(stderr, "Error: evgroup queue has been messed up!\n");
         return NULL;
     }
 
@@ -454,7 +471,6 @@ new_flexpath_reader_file(const char *fname)
 
 enum ADIOS_DATATYPES
 ffs_type_to_adios_type(const char *ffs_type, int size)
-
 {
     char *bracket = "[";
     size_t posfound = strcspn(ffs_type, bracket);
@@ -676,7 +692,6 @@ find_displacement(array_displacements *list, int rank, int num_displ)
     return NULL;
 }
 
-
 array_displacements*
 get_writer_displacements(
     int writer_rank,
@@ -878,9 +893,6 @@ send_finalize_msg(flexpath_reader_file *fp, int destination)
 
 void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
 {
-    read_request_msg_ptr msg = fp->var_read_requests + index;
-    int destination = fp->sendees[index]
-    
     //Give it a condition if we need to block
     //and then set the lamport min
     if(use_condition)
@@ -890,14 +902,14 @@ void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
 
     //TODO: Change this part for the EVstore stuff
     msg->current_lamport_min = -1;
-
-    
     //Basic error checking so we don't break on simple things in the future
     if(index >= fp->num_sendees)
     {
         fprintf("Error: index requested greater than num_sendees\n");
         assert(0);
     }
+
+    read_request_msg_ptr msg = fp->var_read_requests + index;
     int destination = fp->sendees[index]
 
 
@@ -911,29 +923,6 @@ void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
     if(use_condition) {
 	fp_verbose(fp, "WAIT in read_request_msg send\n");
 	CMCondition_wait(fp_read_data->cm, msg->condition);
-	fp_verbose(fp, "Done with WAIT\n");
-    }
-
-}
-
-void
-send_flush_msg(flexpath_reader_file *fp, int destination, Flush_type type, int use_condition)
-{
-    Flush_msg msg;
-    msg.type = type;
-    msg.process_id = fp->rank;
-    msg.id = fp->mystep;
-
-    if (use_condition)
-	msg.condition = CMCondition_get(fp_read_data->cm, NULL);
-    else
-	msg.condition = -1;
-
-    // maybe check to see if the bridge is create first.
-    EVsubmit(fp->bridges[destination].flush_source, &msg, NULL);
-    if (use_condition) {
-	fp_verbose(fp, "WAIT in send_flush_msg\n");
-	CMCondition_wait(fp_read_data->cm, msg.condition);
 	fp_verbose(fp, "Done with WAIT\n");
     }
 }
@@ -1031,21 +1020,6 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     return 0;
 }
 
-
-int
-increment_index(int64_t ndim, uint64_t *dimen_array, uint64_t *index_array)
-{
-    ndim--;
-    while (ndim >= 0) {
-	index_array[ndim]++;
-	if (index_array[ndim] < dimen_array[ndim]) {
-	    return 1;
-	}
-	index_array[ndim] = 0;
-	ndim--;
-    }
-    return 0;
-}
 
 void
 map_local_to_global_index(uint64_t ndim, uint64_t *local_index, uint64_t *local_offsets, uint64_t *global_index)
@@ -1169,11 +1143,13 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     int writer_rank;
     int flush_id;
     int timestep;
+    int only_scalars = 0;
     double data_start;
     get_double_attr(attrs, attr_atom_from_string("fp_starttime"), &data_start);
     get_int_attr(attrs, attr_atom_from_string(FP_RANK_ATTR_NAME), &writer_rank);
     get_int_attr(attrs, attr_atom_from_string("fp_flush_id"), &flush_id);
     get_int_attr(attrs, attr_atom_from_string(FP_TIMESTEP), &timestep);
+    get_int_attr(attrs, attr_atom_from_string(FP_ONLY_SCALARS), &only_scalars);
     /* fprintf(stderr, "\treader rank:%d:got data from writer:%d:step:%d\n", */
     /* 	    fp->rank, writer_rank, fp->mystep); */
     FMContext context = CMget_FMcontext(cm);
@@ -1194,7 +1170,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	int var_count = 0;
 
         pthread_mutex_lock(&(fp->queue_mutex));
-        create_flexpath_var_for_timestep(fp, timestep)
+        create_flexpath_var_for_timestep(fp, timestep);
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
 	ts_var_list->var_list = setup_flexpath_vars(f, &var_count);
         pthread_mutex_unlock(&(fp->queue_mutex));
@@ -1349,15 +1325,20 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     pthread_mutex_unlock(&(fp->queue_mutex));
 
 
-    fp->req.num_completed++;
-    /* fprintf(stderr, "\t\treader rank:%d:step:%d:num_completed:%d:num_pending:%d\n", */
-    /* 	    fp->rank, fp->mystep, fp->req.num_completed, fp->req.num_pending); */
-    if (fp->req.num_completed == fp->req.num_pending) {
-	/* fprintf(stderr, "\t\treader rank:%d:step:%d:signalling_on:%d\n", */
-	/* 	fp->rank, fp->mystep, fp->req.condition); */
-        CMCondition_signal(fp_read_data->cm, fp->req.condition);
-    }
+    //We need this to differentiate between real data messages and the global metadata hack message that gets sent with every
+    //EVgroup message on the writer side
+    if(!only_scalars)
+    {
+        fp->req.num_completed++;
+        /* fprintf(stderr, "\t\treader rank:%d:step:%d:num_completed:%d:num_pending:%d\n", */
+        /* 	    fp->rank, fp->mystep, fp->req.num_completed, fp->req.num_pending); */
+        if (fp->req.num_completed == fp->req.num_pending) {
+            /* fprintf(stderr, "\t\treader rank:%d:step:%d:signalling_on:%d\n", */
+            /* 	fp->rank, fp->mystep, fp->req.condition); */
+            CMCondition_signal(fp_read_data->cm, fp->req.condition);
+        }
 
+    }
 
     free_fmstructdesclist(struct_list);
     return 0;
@@ -1755,59 +1736,51 @@ int
 adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_sec)
 {    
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
-    fp_verbose(fp, " waiting on first barrier in flexpath_advance_step:step:%d\n", fp->mystep);
+    int count = 0;
+
+    //Check to see if we have the next steps global metadata
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * ts_var_list = find_var_list(fp, ++fp->mystep);
+    if(ts_var_list == NULL)
+    {
+        create_flexpath_var_for_timestep(fp, fp->mystep)
+        ts_var_list = find_var_list(fp, fp->mystep);
+    }
+
+    //If we don't have the scalar data or if we haven't received a finalized message, wait
+    while(ts_var_list->is_list_filled == 0 && !fp->writer_finalized) 
+    {
+        fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", fp->mystep);
+        pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
+    }
+    pthread_mutex_unlock(&(fp->queue_mutex));
+    fp_verbose(fp, "Finished wait on global data for timestep: %d\n", fp->mystep);
+
+    //If finalized, err_end_of_stream
+    if(fp->writer_finalized)
+    {
+        fp_verbose(fp, "Received the writer_finalized message! Reader returning err_end_of_stream!\n");
+        adios_errno = err_end_of_stream;
+        return err_end_of_stream;
+    }
+
+    //Remove obsolete bookeeping information and update current_global_info
+    pthread_mutex_lock(&(fp->queue_mutex));
+    
+    int global_data_cleaned = remove_relevant_global_data(fp, fp->mystep - 1);
+    int flexpath_var_cleaned = cleanup_flexpath_vars(fp, fp->mystep - 1);
+    fp->current_global_info = find_relevant_global_data(fp);
+    assert(fp->current_global_info);
+    fp_verbose(fp, "Cleaned the global data and the flexpath vars!\n"
+                    "Global metadata removed: %d\t\tFlexpath vars removed: %d\n", global_data_cleaned, flexpath_var_cleaned);
+    pthread_mutex_unlock(&(fp->queue_mutex));
+
+    //Fix the last of the info the reader will need, this locks and unlocks the mutex so that's why we have it out here
+    share_global_information(fp);
+
+    //Wait for all readers to reach this step, this should change in extended version
     MPI_Barrier(fp->comm);
-    fp_verbose(fp, " wait complete in flexpath_advance_step:step:%d\n", fp->mystep);
-    int count = 0; // for perf measurements
-    fp_verbose(fp, "advance_step:sending flush step to coordinator:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-    //fprintf(stderr, "reader_rank:%d:advance_step:advance_step:after sending flush step to:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-    //put this on a timer, so to speak, for timeout_sec
-    while (fp->mystep == fp->last_writer_step) {
-	if (fp->writer_finalized) {
-	    adios_errno = err_end_of_stream;
-	    return err_end_of_stream;
-	}
-	CMsleep(fp_read_data->cm, 1);
-	fp_verbose(fp, "advance_step:while loop sending flush step to coordinator:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-	send_flush_msg(fp, fp->writer_coordinator, STEP, 1);
-	//fprintf(stderr, "reader_rank:%d:advance_step:after while loop sending flush step to coordinator:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-    }
 
-    int i=0;
-    for (i=0; i<fp->num_bridges; i++) {
-        if (fp->bridges[i].created && fp->bridges[i].opened) {
-	    count++;
-	    send_close_msg(fp, i);
-	}
-    }
-    fp_verbose(fp, "waiting on second barrier in flexpath_advance_step:step:%d\n", fp->mystep);
-    MPI_Barrier(fp->comm);
-    fp_verbose(fp, "done with second barrier in flexpath_advance_step:step:%d\n", fp->mystep);
-
-    count = 0;
-    adiosfile->current_step++;
-    fp->mystep = adiosfile->current_step;
-
-    for (i=0; i<fp->num_bridges; i++) {
-	if (fp->bridges[i].created && !fp->bridges[i].opened) {
-	    fp_verbose(fp, "sending open msg in flexpath_advance_step\n");
-	    send_open_msg(fp, i);
-	    count++;
-        }
-    }
-    // need to remove selectors from each var now.
-    fp->req.num_completed = 0;
-    fp->req.num_pending = 1;
-    fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
-    fp_verbose(fp, "advance_step: sending flush DATA to coordinator, then WAITING:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-    send_flush_msg(fp, fp->writer_coordinator, DATA, 0);
-    CMCondition_wait(fp_read_data->cm, fp->req.condition);
-    fp_verbose(fp, "advance_step:Condition wait is complete:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-    // should only happen if there are more steps available.
-    // writer should have advanced.
-    fp_verbose(fp, "advance_step: sending flush EVGROUP to coordinator:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
-    send_flush_msg(fp, fp->writer_coordinator, EVGROUP, 1);
-    //fprintf(stderr, "reader_rank:%d:advance_step:while loop after flush EVGROUP to coordinator:%d:step:%d\n", fp->writer_coordinator,fp->mystep);
     return 0;
 }
 
@@ -1886,12 +1859,11 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
 
     for (i = 0; i<num_sendees; i++) {
-	int sendee = fp->sendees[i];
 	batchcount++;
 	total_sent++;
 		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
 		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
-	send_flush_msg(fp, sendee, DATA, 0);
+	send_read_msg(fp, i, 0);
 
 	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
             fp->req.num_pending = batchcount;
@@ -1908,11 +1880,19 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
 
     }
 
+    //Immediate_cleanup?
     free(fp->sendees);
     fp->sendees = NULL;
     fp->num_sendees = 0;
 
-    flexpath_var *tmpvars = fp->var_list;
+    
+    //Get the current var_list
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * curr_var_list =  find_var_list(fp, fp->mystep);
+    assert(curr_var_list);
+    flexpath_var *tmpvars = curr_var_list->var_list;
+    pthread_mutex_unlock(&(fp->queue_mutex));
+
     while (tmpvars) {
 	if (tmpvars->displ) {
 	    free_displacements(tmpvars->displ, tmpvars->num_displ);
@@ -1952,7 +1932,11 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
 				       void *data)
 {
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
-    flexpath_var *fpvar = fp->var_list;
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * curr_var_list =  find_var_list(fp, fp->mystep);
+    assert(curr_var_list);
+    flexpath_var *fpvar = curr_var_list->var_list;
+    pthread_mutex_unlock(&(fp->queue_mutex));
 
     fp_verbose(fp, "entering schedule_read_byid, varid %d\n", varid);
     while (fpvar) {
@@ -1967,6 +1951,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
 		    varid);
         return err_invalid_varid;
     }
+
     //store the user allocated buffer.
     flexpath_var_chunk *chunk = &fpvar->chunks[0];
     if (nsteps != 1) {
@@ -2082,8 +2067,25 @@ adios_read_flexpath_schedule_read(const ADIOS_FILE *adiosfile,
 			int nsteps,
 			void * data)
 {
-    fprintf(stderr, "schedule_read is called\n");
-    return 0;
+    fp_verbose(fp, "entering schedule_read, var: %s\n", varname);
+    flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * curr_var_list =  find_var_list(fp, fp->mystep);
+    assert(curr_var_list);
+    flexpath_var *fpvar = find_fp_var(curr_var_list->var_list, varname);
+    pthread_mutex_unlock(&(fp->queue_mutex));
+
+    if (!fpvar) {
+        adios_error(err_invalid_varid,
+		    "Invalid variable id: %s\n",
+		    varname);
+        return err_invalid_varid;
+    }
+
+    int id = fpvar->id;
+
+    fp_verbose(fp, "Calling read_by_id, var: %d\n", id);
+    return adios_read_flexpath_schedule_read_byid(adiosfile, sel, id, from_steps, nsteps, data);
 }
 
 int
@@ -2123,7 +2125,10 @@ adios_read_flexpath_inq_var(const ADIOS_FILE * adiosfile, const char* varname)
     ADIOS_VARINFO *v = NULL;
 
     fp_verbose(fp, "entering flexpath_inq_var\n");
-    flexpath_var *fpvar = find_fp_var(fp->var_list, varname);
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
+    flexpath_var *fpvar = find_fp_var(ts_var_list->var_list, varname);
+    pthread_mutex_unlock(&(fp->queue_mutex));
     if (fpvar) {
         v = calloc(1, sizeof(ADIOS_VARINFO));
 
