@@ -1141,13 +1141,9 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     ADIOS_FILE *adiosfile = client_data;
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
     int writer_rank;
-    int flush_id;
     int timestep;
     int only_scalars = 0;
-    double data_start;
-    get_double_attr(attrs, attr_atom_from_string("fp_starttime"), &data_start);
     get_int_attr(attrs, attr_atom_from_string(FP_RANK_ATTR_NAME), &writer_rank);
-    get_int_attr(attrs, attr_atom_from_string("fp_flush_id"), &flush_id);
     get_int_attr(attrs, attr_atom_from_string(FP_TIMESTEP), &timestep);
     get_int_attr(attrs, attr_atom_from_string(FP_ONLY_SCALARS), &only_scalars);
     /* fprintf(stderr, "\treader rank:%d:got data from writer:%d:step:%d\n", */
@@ -1787,35 +1783,42 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
 int adios_read_flexpath_close(ADIOS_FILE * fp)
 {
     flexpath_reader_file *file = (flexpath_reader_file*)fp->fh;
-    //send to each opened link
-    int i;
-    for (i = 0; i<file->num_bridges; i++) {
-        if (file->bridges[i].created && file->bridges[i].opened) {
-	    send_close_msg(file, i);
-        }
-    }
+    //TODO: Send close message to each opened link
+
+
     /*
     start to cleanup.  Clean up var_lists for now, as the
     data has already been copied over to ADIOS_VARINFO structs
     that the user maintains a copy of.
     */
-    flexpath_var *v = file->var_list;
-    while (v) {
-    	// free chunks; data has already been copied to user
-    	int i;
-    	for (i = 0; i<v->num_chunks; i++) {
-    	    flexpath_var_chunk *c = &v->chunks[i];
-	    if (!c)
-		log_error("FLEXPATH: %s This should not happen! line %d\n",__func__,__LINE__);
-	    //free(c->data);
-	    c->data = NULL;
-	    free(c);
-	}
-	flexpath_var *tmp = v->next;
-	free(v);
-	v = tmp;
-    	//v=v->next;
+    
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * curr = file->ts_var_list;
+    while(curr)
+    {
+        flexpath_var * v = curr->var_list;
+        while (v) {
+        	// free chunks; data has already been copied to user
+        	int i;
+        	for (i = 0; i<v->num_chunks; i++) {
+        	    flexpath_var_chunk *c = &v->chunks[i];
+    	    if (!c)
+    		log_error("FLEXPATH: %s This should not happen! line %d\n",__func__,__LINE__);
+    	    //free(c->data);
+    	    c->data = NULL;
+    	    free(c);
+    	}
+    	flexpath_var *tmp = v->next;
+    	free(v);
+    	v = tmp;
+        	//v=v->next;
+        }
+        timestep_seperated_var_list * temp = curr->next;
+        free(curr);
+        curr = temp;
     }
+    file->ts_var_list = NULL;
+    pthread_mutex_unlock(&(fp->queue_mutex));
     return 0;
 }
 

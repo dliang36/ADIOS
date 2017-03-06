@@ -1,5 +1,98 @@
+/*Writer Side */
+
+/*Old copy buffer code, not sure we need it*/
+    while (f->field_name != NULL)
+    {
+        FlexpathVarNode* a;
+        if (!queue_contains(fileData->askedVars, f->field_name, rank)) {
+            if ((a=queue_contains(fileData->formatVars, f->field_name, -1)) 
+	       && 
+	       (a->dimensions != NULL)) {
+                FlexpathVarNode* dim = a->dimensions;
+                while (dim) {
+                    FMField *f2 = fileData->fm->format[0].field_list;
+                    while (f2->field_name != NULL) {
+                        if (strcmp(f2->field_name, dim->varName)==0) {
+                            break;
+                        }
+                        f2++;
+                    }
+                    if (f2->field_name != NULL) {
+                        memset(&temp[f2->field_offset], 0, f2->field_size);
+                    }
+                    dim = dim->next;
+                }
+                memset(&temp[f->field_offset], 0, f->field_size);
+            }
+        }   
+        f++;
+    }
+    return temp;
 
 
+void
+process_close_msg(FlexpathWriteFileData *fileData, op_msg *close)
+{
+
+    fp_verbose(fileData, " process close msg, bridge %d\n", close->process_id);
+    pthread_mutex_lock(&fileData->openMutex);
+    fileData->openCount--;
+    fileData->bridges[close->process_id].opened=0;
+    fileData->bridges[close->process_id].condition = close->condition;
+    pthread_mutex_unlock(&fileData->openMutex);
+
+    /* if (fileData->openCount==0) { */
+    /* 	FlexpathQueueNode* node = threaded_dequeue(&fileData->dataQueue,  */
+    /* 						   &fileData->dataMutex,  */
+    /* 						   &fileData->dataCondition, 1); */
+    /* 	FMfree_var_rec_elements(fileData->fm->ioFormat, node->data); */
+
+    /* 	drop_evgroup_msg *dropMsg = malloc(sizeof(drop_evgroup_msg)); */
+    /* 	dropMsg->step = fileData->readerStep; */
+    /* 	int wait = CMCondition_get(flexpathWriteData.cm, NULL); */
+    /* 	dropMsg->condition = wait; */
+    /* 	EVsubmit_general(fileData->dropSource, dropMsg, drop_evgroup_msg_free, fileData->attrs); */
+    /* 	//EVsubmit_general(fileData->dropSource, dropMsg, NULL, fileData->attrs); */
+    /* 	// Will have to change when not using ctrl thread. */
+    /* 	CMCondition_wait(flexpathWriteData.cm,  wait); 		     */
+		     
+    /* 	fileData->readerStep++; */
+    /* } */
+		
+    op_msg *ack = malloc(sizeof(op_msg));
+    ack->file_name = strdup(fileData->name);
+    ack->process_id = fileData->rank;
+    ack->step = fileData->readerStep;
+    ack->type = 2;
+    ack->condition = close->condition;
+    fileData->attrs = set_dst_rank_atom(fileData->attrs, close->process_id + 1);
+    EVsubmit_general(fileData->opSource, 
+		     ack, 
+		     op_free, 
+		     fileData->attrs);		
+		
+}
+
+
+EVassoc_terminal_action(flexpathWriteData.cm, fileData->sinkStone, 
+                        flush_format_list, flush_handler, fileData);
+
+
+void
+evgroup_msg_free(void *eventData, void *clientData)
+{
+    
+    /* evgroup *msg = (evgroup*)eventData; */
+    /* int num_vars = msg->num_vars; */
+    /* int i; */
+    /* for (i=0; i<num_vars; i++) { */
+    /* 	free(msg->vars[i].offsets); */
+    /* } */
+    /* free(msg); */
+}
+
+
+/*Reader Side */
 
 int
 increment_index(int64_t ndim, uint64_t *dimen_array, uint64_t *index_array)

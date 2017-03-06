@@ -43,6 +43,12 @@
 
 #define CONTACT_STR_LEN 50
 
+typedef struct _finalize_close_msg {
+    int finalize;
+    int close;
+} finalize_close_msg, * finalize_close_msg_ptr;
+
+
 typedef struct _reader_register_msg {
     uint64_t writer_file;
     uint64_t reader_file;
@@ -73,18 +79,6 @@ static FMField reader_go_field_list[] =
     {NULL, NULL, 0, 0}
 };
 
-
-
-typedef struct _update_step_msg{
-    int step;
-    int finalized;
-    int condition;
-}update_step_msg;
-
-typedef struct _drop_evgroup{
-    int step;
-    int condition;
-}drop_evgroup_msg;
 /*
  * Contains the offset information for a variable for all writers.
  * offsets_per_rank is == ndims.
@@ -177,14 +171,6 @@ static FMField double_complex_dummy_field_list[] =
     {NULL, NULL, 0, 0}
 };
 
-static FMField update_step_msg_field_list[]=
-{
-    {"step", "integer", sizeof(int), FMOffset(update_step_msg*, step)},
-    {"finalized", "integer", sizeof(int), FMOffset(update_step_msg*, finalized)},
-    {"condition", "integer", sizeof(int), FMOffset(update_step_msg*, condition)},
-    {NULL, NULL, 0, 0}
-};
-
 static FMField evgroup_field_list[]=
 {
     {"condition", "integer", sizeof(int), FMOffset(evgroup_ptr, condition)},
@@ -197,17 +183,19 @@ static FMField evgroup_field_list[]=
 };
 
 
-static FMStructDescRec update_step_msg_format_list[]=
+static FMField finalize_close_msg_field_list[] =
 {
-    {"update_step_msg", update_step_msg_field_list, sizeof(update_step_msg), NULL},
+    {"finalize", "integer", sizeof(int), FMOffset(finalize_close_msg_ptr, finalize)},
+    {"close", "integer", sizeof(int), FMOffset(finalize_close_msg_ptr, close)},
     {NULL, NULL, 0, 0}
 };
 
-static FMStructDescRec drop_evgroup_msg_format_list[]=
+static FMStructDescRec finalize_close_msg_format_list[]=
 {
-    {"drop_evgroup_msg", drop_evgroup_msg_field_list, sizeof(drop_evgroup_msg), NULL},
+    {"finalize_close_msg", finalize_close_msg_field_list, sizeof(finalize_close_msg), NULL},
     {NULL, NULL, 0, 0}
 };
+
 
 static FMStructDescRec offset_struct_format_list[] =
 {
