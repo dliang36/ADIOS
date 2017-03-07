@@ -1566,7 +1566,7 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     for(int i = 0; i < fileData->num_readers_to_inform; i++)
     {
         fileData->attrs = set_dst_rank_atom(fileData->attrs, fileData->readers_to_inform_ranks[i]);
-        EVsubmit_general(fileData->offsetSource, gp, evgroup_msg_free, fileData->attrs);
+        EVsubmit_general(fileData->offsetSource, gp, NULL, fileData->attrs);
         EVsubmit_general(fileData->scalarDataSource, temp, NULL, fileData->attrs);
     }
     free(temp);

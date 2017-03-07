@@ -64,7 +64,7 @@
 typedef struct _global_metadata
 {
     evgroup * metadata;
-    struct _global_metadata next;
+    struct _global_metadata * next;
 } global_metadata, * global_metadata_ptr;
 
 typedef struct _bridge_info
@@ -198,6 +198,24 @@ flexpath_read_data* fp_read_data = NULL;
 
 /********** Helper functions. **********/
 
+void build_bridge(bridge_info* bridge)
+{
+    attr_list contact_list = attr_list_from_string(bridge->contact);
+    if (bridge->created == 0) {
+	bridge->bridge_stone =
+	    EVcreate_bridge_action(fp_read_data->cm,
+				   contact_list,
+				   (EVstone)bridge->their_num);
+
+        bridge->read_source = 
+            EVcreate_submit_handle(fp_read_data->cm,
+                                    bridge->bridge_stone,
+                                    read_request_format_list);
+
+	bridge->created = 1;
+    }
+}
+
 /* This function returns an array of size = num_readers
    that dictates which writer each reader wants to receive
    information from
@@ -250,6 +268,54 @@ find_var_list(flexpath_reader_file * fp, int timestep)
     return temp;
 }
 
+flexpath_var*
+new_flexpath_var(const char *varname, int id, uint64_t type_size)
+{
+    flexpath_var *var = malloc(sizeof(flexpath_var));
+    if (var == NULL) {
+	log_error("Error creating new var: %s\n", varname);
+	return NULL;
+    }
+
+    memset(var, 0, sizeof(flexpath_var));
+    // free this when freeing vars.
+    var->varname = strdup(varname);
+    var->time_dim = -1;
+    var->id = id;
+    var->type_size = type_size;
+    var->displ = NULL;
+    return var;
+}
+
+//We need to copy the names and set up the flexpath vars when the data comes in
+flexpath_var*
+pseudo_copy_flexpath_vars(flexpath_var *f)
+{
+    flexpath_var *vars = NULL;
+
+    while (f != NULL) {
+	flexpath_var *curr_var = new_flexpath_var(f->varname, f->id, f->type_size);
+
+	curr_var->num_chunks = 1;
+	curr_var->chunks =  malloc(sizeof(flexpath_var_chunk)*curr_var->num_chunks);
+	memset(curr_var->chunks, 0, sizeof(flexpath_var_chunk)*curr_var->num_chunks);
+	curr_var->sel = NULL;
+	curr_var->type = f->type;
+
+        //Make an exact copy of the list if possible
+        if(!vars)
+            vars = curr_var;
+        else
+        {
+            flexpath_var * last_var = vars;
+            while(last_var->next != NULL) last_var = last_var->next;
+            last_var->next = curr_var;
+        }
+
+	f = f->next;
+    }
+    return vars;
+}
 
 static void
 create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
@@ -280,6 +346,67 @@ create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
 
 }
 
+void
+free_displacements(array_displacements *displ, int num)
+{
+    if (displ) {
+	int i;
+	for (i=0; i<num; i++) {
+	    free(displ[i].start);
+	    free(displ[i].count);
+	}
+	free(displ);
+    }
+}
+
+static void
+flexpath_var_free(flexpath_var * tmpvars)
+{
+    while (tmpvars) {
+
+        if(tmpvars->varname) {
+            free(tmpvars->varname);
+            tmpvars->varname = NULL;
+        }
+
+        if(tmpvars->varpath) {
+            free(tmpvars->varpath);
+            tmpvars->varpath = NULL;
+        }
+
+	if (tmpvars->ndims > 0) {
+	    free(tmpvars->global_dims);
+	    tmpvars->ndims = 0;
+	}
+	if (tmpvars->displ) {
+	    free_displacements(tmpvars->displ, tmpvars->num_displ);
+	    tmpvars->displ = NULL;
+	}
+
+	if (tmpvars->sel) {
+	    a2sel_free(tmpvars->sel);
+	    tmpvars->sel = NULL;
+	}
+
+	tmpvars->sel = NULL;
+	for (int i=0; i<tmpvars->num_chunks; i++) {
+	    flexpath_var_chunk *chunk = &tmpvars->chunks[i];
+	    if (chunk->has_data) {
+		free(chunk->data);
+		chunk->data = NULL;
+		chunk->has_data = 0;
+	    }
+	    chunk->rank = 0;
+	}
+
+
+        flexpath_var * tmp = tmpvars->next;
+        free(tmpvars);
+	tmpvars = tmp;
+    }
+}
+
+
 //Return the number of elements removed, don't remove if there's only one in the list
 static int
 cleanup_flexpath_vars(flexpath_reader_file * fp, int timestep)
@@ -300,7 +427,7 @@ cleanup_flexpath_vars(flexpath_reader_file * fp, int timestep)
     {
         if(curr->timestep <= timestep)
         {
-            flexpath_var_free(curr->var_list)
+            flexpath_var_free(curr->var_list);
             if(!prev)
             {
                 fp->ts_var_list = curr->next;
@@ -326,18 +453,24 @@ cleanup_flexpath_vars(flexpath_reader_file * fp, int timestep)
 
 }
 
+void
+free_evgroup(evgroup *gp)
+{
+    EVreturn_event_buffer(fp_read_data->cm, gp);
+}
+
 //Return the number of elements removed
 static int 
 remove_relevant_global_data(flexpath_reader_file * fp, int timestep)
 {
-    global_metadata_ptr * curr = fp->global_info;
-    global_metadata_ptr * prev = NULL;
+    global_metadata_ptr curr = fp->global_info;
+    global_metadata_ptr prev = NULL;
     int count = 0;
     while(curr != NULL)
     {
         if(timestep >= curr->metadata->step)
         {
-            global_metadata_ptr * temp;
+            global_metadata_ptr temp;
             if(!prev)
             {
                 fp->global_info = curr->next;
@@ -387,18 +520,34 @@ find_relevant_global_data(flexpath_reader_file * fp)
     return curr->metadata;
 }
 
+flexpath_var *
+find_fp_var(flexpath_var * var_list, const char * varname)
+{
+    while (var_list) {
+	if (!strcmp(varname, var_list->varname)) {
+	    return var_list;
+	}
+	var_list = var_list->next;
+    }
+    return NULL;
+}
+
 static void
 share_global_information(flexpath_reader_file * fp)
 {
     for (int i = 0; i < fp->current_global_info->num_vars; i++)
     {
-        global_var *gblvar = &current_global_info->vars[i];
+        global_var *gblvar = &(fp->current_global_info->vars[i]);
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
         if(!ts_var_list) 
         {
             fprintf(stderr, "Error: could not find var list after it was reported that we had it!!\n");
-            assert(1);
+            if(!1)
+            {
+                fprintf(stderr, "Severe logic error!\n");
+                exit(1);
+            }
         }
         flexpath_var *fpvar = find_fp_var(ts_var_list->var_list, gblvar->name);
         pthread_mutex_unlock(&(fp->queue_mutex));
@@ -433,61 +582,9 @@ reverse_dims(uint64_t *dims, int len)
     }
 }
 
-void build_bridge(bridge_info* bridge)
-{
-    attr_list contact_list = attr_list_from_string(bridge->contact);
-    if (bridge->created == 0) {
-	bridge->bridge_stone =
-	    EVcreate_bridge_action(fp_read_data->cm,
-				   contact_list,
-				   (EVstone)bridge->their_num);
 
-        bridge->read_source = 
-            EVcreate_submit_handle(fp_read_data->cm,
-                                    bridge->bridge_stone,
-                                    read_request_format_list);
 
-	bridge->created = 1;
-    }
-}
 
-void
-free_displacements(array_displacements *displ, int num)
-{
-    if (displ) {
-	int i;
-	for (i=0; i<num; i++) {
-	    free(displ[i].start);
-	    free(displ[i].count);
-	}
-	free(displ);
-    }
-}
-
-void
-free_evgroup(evgroup *gp)
-{
-    EVreturn_event_buffer(fp_read_data->cm, gp);
-}
-
-flexpath_var*
-new_flexpath_var(const char *varname, int id, uint64_t type_size)
-{
-    flexpath_var *var = malloc(sizeof(flexpath_var));
-    if (var == NULL) {
-	log_error("Error creating new var: %s\n", varname);
-	return NULL;
-    }
-
-    memset(var, 0, sizeof(flexpath_var));
-    // free this when freeing vars.
-    var->varname = strdup(varname);
-    var->time_dim = -1;
-    var->id = id;
-    var->type_size = type_size;
-    var->displ = NULL;
-    return var;
-}
 
 flexpath_reader_file*
 new_flexpath_reader_file(const char *fname)
@@ -611,17 +708,6 @@ convert_var_info(flexpath_var * fpvar,
     return v;
 }
 
-flexpath_var *
-find_fp_var(flexpath_var * var_list, const char * varname)
-{
-    while (var_list) {
-	if (!strcmp(varname, var_list->varname)) {
-	    return var_list;
-	}
-	var_list = var_list->next;
-    }
-    return NULL;
-}
 
 global_var*
 find_gbl_var(global_var *vars, const char *name, int num_vars)
@@ -875,62 +961,26 @@ setup_flexpath_vars(FMField *f, int *num)
     return vars;
 }
 
-//We need to copy the names and set up the flexpath vars when the data comes in
-flexpath_var*
-pseudo_copy_flexpath_vars(flexpath_var *f)
-{
-    flexpath_var *vars = NULL;
-
-    while (f != NULL) {
-	flexpath_var *curr_var = new_flexpath_var(f->var_name, f->id, f->type_size);
-
-	curr_var->num_chunks = 1;
-	curr_var->chunks =  malloc(sizeof(flexpath_var_chunk)*curr_var->num_chunks);
-	memset(curr_var->chunks, 0, sizeof(flexpath_var_chunk)*curr_var->num_chunks);
-	curr_var->sel = NULL;
-	curr_var->type = f->type;
-
-        //Make an exact copy of the list if possible
-        if(!vars)
-            vars = curr_var;
-        else
-        {
-            flexpath_var * last_var = vars;
-            while(last_var->next != NULL) last_var = last_var->next;
-            last_var->next = curr_var;
-        }
-
-	f = f->next;
-    }
-
-    return vars;
-}
 
 /*****************Messages to writer procs**********************/
 
 void
 send_finalize_msg(flexpath_reader_file *fp, int destination)
 {
-    if (!fp->bridges[destination].created) {
-	build_bridge(&(fp->bridges[destination]));
-    }
-    op_msg msg;
-    msg.process_id = fp->rank;
-    msg.file_name = fp->file_name;
-    msg.step = fp->mystep;
-    msg.type = FINALIZE_MSG;
-    //msg.condition = -1;
-    int cond = CMCondition_get(fp_read_data->cm, NULL);
-    msg.condition = cond;
-    EVsubmit(fp->bridges[destination].op_source, &msg, NULL);
-    fp_verbose(fp, "sending finalize msg, setting opened to 0, destination %d, WAITING\n", destination);
-    CMCondition_wait(fp_read_data->cm, cond);
-    fp_verbose(fp, "Done with WAIT\n");
-    fp->bridges[destination].opened = 0;
+    /*TODO: make this work one day!!*/
 }
 
 void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
 {
+    //Initial sanity check
+    if(index >= fp->num_sendees)
+    {
+        fprintf(stderr, "Error: index requested greater than num_sendees\n");
+        exit(1);
+    }
+
+    read_request_msg_ptr msg = fp->var_read_requests + index;
+    int destination = fp->sendees[index];
     //Give it a condition if we need to block
     //and then set the lamport min
     if(use_condition)
@@ -941,20 +991,13 @@ void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
     //TODO: Change this part for the EVstore stuff
     msg->current_lamport_min = -1;
     //Basic error checking so we don't break on simple things in the future
-    if(index >= fp->num_sendees)
-    {
-        fprintf("Error: index requested greater than num_sendees\n");
-        assert(0);
-    }
 
-    read_request_msg_ptr msg = fp->var_read_requests + index;
-    int destination = fp->sendees[index]
 
 
     if(!fp->bridges[destination].opened) 
     {
-        fprintf("Error: trying to send to a bridge that is not open yet!\n");
-        assert(0);
+        fprintf(stderr, "Error: trying to send to a bridge that is not open yet!\n");
+        exit(1);
     }
 
     EVsubmit(fp->bridges[destination].read_source, msg, NULL);
@@ -1049,7 +1092,7 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     }
     else
     {
-        curr->next = calloc(1, sizeof(global_metada));
+        curr->next = calloc(1, sizeof(global_metadata));
         curr = curr->next;
     }
 
@@ -1061,12 +1104,14 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
 static int
 finalize_msg_handler(CManager cm, void * vevent, void * client_data, attr_list attrs)
 {
-   fp_verbose(fp, "Received the finalize message from the writer\n");
-   pthread_mutex_lock(&(fp->queue_mutex));
-   fp->writer_finalized = 1;
-   pthread_cond_signal(&(fp->queue_condition));
-   pthread_mutex_unlock(&(fp->queue_mutex));
-   return 0;
+    ADIOS_FILE *adiosfile = client_data;
+    flexpath_reader_file * fp = (flexpath_reader_file*)adiosfile->fh;
+    fp_verbose(fp, "Received the finalize message from the writer\n");
+    pthread_mutex_lock(&(fp->queue_mutex));
+    fp->writer_finalized = 1;
+    pthread_cond_signal(&(fp->queue_condition));
+    pthread_mutex_unlock(&(fp->queue_mutex));
+    return 0;
 }
 
 void
@@ -1316,9 +1361,9 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 
 		if (var->ndims > 0) { // arrays
 		    int i;
-		    global_var *gv = find_gbl_var(fp->gp->vars,
+		    global_var *gv = find_gbl_var(fp->current_global_info->vars,
 						  var->varname,
-						  fp->gp->num_vars);
+						  fp->current_global_info->num_vars);
 
 		    array_displacements *disp = find_displacement(var->displ,
 								  writer_rank,
@@ -1365,7 +1410,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
     ts_var_list->is_list_filled = 1;
-    pthread_condition_signal(&(fp->queue_condition));
+    pthread_cond_signal(&(fp->queue_condition));
     pthread_mutex_unlock(&(fp->queue_mutex));
 
 
@@ -1591,7 +1636,7 @@ adios_read_flexpath_open(const char * fname,
 	for (int i=0; i<fp->size; i++) {
             reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
-        int * write_array = get_writer_array(fp)
+        int * write_array = get_writer_array(fp);
         reader_register.writer_array = write_array;
 
         CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
@@ -1646,7 +1691,7 @@ adios_read_flexpath_open(const char * fname,
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
     if(ts_var_list == NULL)
     {
-        create_flexpath_var_for_timestep(fp, fp->mystep)
+        create_flexpath_var_for_timestep(fp, fp->mystep);
         ts_var_list = find_var_list(fp, fp->mystep);
     }
 
@@ -1708,52 +1753,6 @@ int adios_read_flexpath_finalize_method ()
     return 1;
 }
 
-static void
-flexpath_var_free(flexpath_var * tmpvars)
-{
-    while (tmpvars) {
-
-        if(tmpvars->varname) {
-            free(tmpvars->varname);
-            tmpvars->varname = NULL;
-        }
-
-        if(tmpvars->varpath) {
-            free(tmpvars->varpath);
-            tmpvars->varpath = NULL;
-        }
-
-	if (tmpvars->ndims > 0) {
-	    free(tmpvars->global_dims);
-	    tmpvars->ndims = 0;
-	}
-	if (tmpvars->displ) {
-	    free_displacements(tmpvars->displ, tmpvars->num_displ);
-	    tmpvars->displ = NULL;
-	}
-
-	if (tmpvars->sel) {
-	    a2sel_free(tmpvars->sel);
-	    tmpvars->sel = NULL;
-	}
-
-	tmpvars->sel = NULL;
-	for (i=0; i<tmpvars->num_chunks; i++) {
-	    flexpath_var_chunk *chunk = &tmpvars->chunks[i];
-	    if (chunk->has_data) {
-		free(chunk->data);
-		chunk->data = NULL;
-		chunk->has_data = 0;
-	    }
-	    chunk->rank = 0;
-	}
-
-
-        flexpath_var * tmp = tmpvars->next;
-        free(tmpvars);
-	tmpvars = tmp;
-    }
-}
 
 //A lot of the complexity of the underlying linked lists is hidden in the functions
 void adios_read_flexpath_release_step(ADIOS_FILE *adiosfile) {
@@ -1764,13 +1763,12 @@ void adios_read_flexpath_release_step(ADIOS_FILE *adiosfile) {
     //fp_verbose(fp, "done with flexpath_release step barrier\n");
 
     pthread_mutex_lock(&(fp->queue_mutex));
-    remove_relevant_global_data(fp, fp->mystep)
+    remove_relevant_global_data(fp, fp->mystep);
     pthread_mutex_unlock(&(fp->queue_mutex));
     fp->current_global_info = NULL;
 
-    flexpath_var *tmpvars = fp->var_list;
     pthread_mutex_lock(&(fp->queue_mutex));
-    cleanup_flexpath_vars(fp, fp->mystep)
+    cleanup_flexpath_vars(fp, fp->mystep);
     pthread_mutex_unlock(&(fp->queue_mutex));
 }
 
@@ -1785,7 +1783,7 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, ++fp->mystep);
     if(ts_var_list == NULL)
     {
-        create_flexpath_var_for_timestep(fp, fp->mystep)
+        create_flexpath_var_for_timestep(fp, fp->mystep);
         ts_var_list = find_var_list(fp, fp->mystep);
     }
 
@@ -1812,7 +1810,11 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     int global_data_cleaned = remove_relevant_global_data(fp, fp->mystep - 1);
     int flexpath_var_cleaned = cleanup_flexpath_vars(fp, fp->mystep - 1);
     fp->current_global_info = find_relevant_global_data(fp);
-    assert(fp->current_global_info);
+    if(!fp->current_global_info)
+    {
+        fprintf(stderr, "Severe logic error!\n");
+        exit(1);
+    }
     fp_verbose(fp, "Cleaned the global data and the flexpath vars!\n"
                     "Global metadata removed: %d\t\tFlexpath vars removed: %d\n", global_data_cleaned, flexpath_var_cleaned);
     pthread_mutex_unlock(&(fp->queue_mutex));
@@ -1838,7 +1840,7 @@ int adios_read_flexpath_close(ADIOS_FILE * fp)
     that the user maintains a copy of.
     */
     
-    pthread_mutex_lock(&(fp->queue_mutex));
+    pthread_mutex_lock(&(file->queue_mutex));
     timestep_seperated_var_list * curr = file->ts_var_list;
     while(curr)
     {
@@ -1864,7 +1866,7 @@ int adios_read_flexpath_close(ADIOS_FILE * fp)
         curr = temp;
     }
     file->ts_var_list = NULL;
-    pthread_mutex_unlock(&(fp->queue_mutex));
+    pthread_mutex_unlock(&(file->queue_mutex));
     return 0;
 }
 
@@ -1938,7 +1940,11 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     //Get the current var_list
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * curr_var_list =  find_var_list(fp, fp->mystep);
-    assert(curr_var_list);
+    if(!curr_var_list)
+    {
+        fprintf(stderr, "Severe logic error!\n");
+        exit(1);
+    }
     flexpath_var *tmpvars = curr_var_list->var_list;
     pthread_mutex_unlock(&(fp->queue_mutex));
 
@@ -1983,7 +1989,11 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * curr_var_list =  find_var_list(fp, fp->mystep);
-    assert(curr_var_list);
+    if(!curr_var_list)
+    {
+        fprintf(stderr, "Severe logic error!\n");
+        exit(1);
+    }
     flexpath_var *fpvar = curr_var_list->var_list;
     pthread_mutex_unlock(&(fp->queue_mutex));
 
@@ -2116,11 +2126,15 @@ adios_read_flexpath_schedule_read(const ADIOS_FILE *adiosfile,
 			int nsteps,
 			void * data)
 {
-    fp_verbose(fp, "entering schedule_read, var: %s\n", varname);
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
+    fp_verbose(fp, "entering schedule_read, var: %s\n", varname);
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * curr_var_list =  find_var_list(fp, fp->mystep);
-    assert(curr_var_list);
+    if(!curr_var_list)
+    {
+        fprintf(stderr, "Severe logic error!\n");
+        exit(1);
+    }
     flexpath_var *fpvar = find_fp_var(curr_var_list->var_list, varname);
     pthread_mutex_unlock(&(fp->queue_mutex));
 
