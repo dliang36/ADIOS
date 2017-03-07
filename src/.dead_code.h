@@ -1,5 +1,40 @@
 /*Writer Side */
 
+// search a var list
+FlexpathVarNode* 
+queue_contains(FlexpathVarNode* queue, const char* name, int rank) 
+{
+    int compare_rank = 0;
+    if (rank >= 0 ) {
+        compare_rank = 1;
+    }
+    FlexpathVarNode* tmp = queue;
+    while (tmp) {
+        if (strcmp(tmp->varName, name)==0) {
+            if (compare_rank) {
+                if (tmp->rank == rank) {
+                    return tmp;
+                }
+            } else {
+                return tmp;
+            }
+        }
+        tmp = tmp->next;
+    }
+    return NULL;
+}
+static char extern_string[] = "\
+    int get_reader_timestep(cod_exec_context ec);\n\
+    void gather_EVgroup(cod_exec_context ec);\n\
+";
+
+static cod_extern_entry extern_map[] = {
+    {"get_reader_timestep", (void*)(long)cod_get_reader_timestep},
+    {"gather_EVgroup", (void*)(long)cod_gather_EVgroup},
+    {(void*)0, (void*)0}
+};
+
+
 /*Old copy buffer code, not sure we need it*/
     while (f->field_name != NULL)
     {

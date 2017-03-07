@@ -198,6 +198,44 @@ flexpath_read_data* fp_read_data = NULL;
 
 /********** Helper functions. **********/
 
+/* This function returns an array of size = num_readers
+   that dictates which writer each reader wants to receive
+   information from
+*/
+static int *
+get_writer_array(flexpath_reader_file * fp)
+{
+    int * the_array = malloc(fp->size * sizeof(int));
+    for(int i = 0; i < fp->size; i++)
+    {
+        if(fp->size < fp->num_bridges)
+            the_array[i] = (fp->num_bridges/fp->size) * i;
+        else
+            the_array[i] = fp->rank % fp->num_bridges;
+    }
+
+    //Do normal reading setup, here.  I wanted to do everything in one place
+    //to reduce errors if we have to change things later on.
+    if (fp->size < fp->num_bridges) {
+    	int mystart = the_array[fp->rank];
+    	int myend = (fp->num_bridges/fp->size) * (fp->rank+1);
+    	fp->writer_coordinator = mystart;
+    	int z;
+    	for (z=mystart; z<myend; z++) {
+    	    build_bridge(&fp->bridges[z]);
+    	}
+    }
+    else {
+	int writer_rank = the_array[fp->rank];
+	build_bridge(&fp->bridges[writer_rank]);
+	fp->writer_coordinator = writer_rank;
+    }
+
+
+    return the_array;
+}
+
+
 static timestep_seperated_var_list *
 find_var_list(flexpath_reader_file * fp, int timestep)
 {
@@ -1020,6 +1058,16 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     return 0;
 }
 
+static int
+finalize_msg_handler(CManager cm, void * vevent, void * client_data, attr_list attrs)
+{
+   fp_verbose(fp, "Received the finalize message from the writer\n");
+   pthread_mutex_lock(&(fp->queue_mutex));
+   fp->writer_finalized = 1;
+   pthread_cond_signal(&(fp->queue_condition));
+   pthread_mutex_unlock(&(fp->queue_mutex));
+   return 0;
+}
 
 void
 map_local_to_global_index(uint64_t ndim, uint64_t *local_index, uint64_t *local_offsets, uint64_t *global_index)
@@ -1473,6 +1521,12 @@ adios_read_flexpath_open(const char * fname,
 			    group_msg_handler,
 			    adiosfile);
 
+    EVassoc_terminal_action(fp_read_data->cm,
+                            fp->stone,
+                            finalize_close_msg_format_list,
+                            finalize_msg_handler,
+                            adiosfile);
+                            
     EVassoc_raw_terminal_action(fp_read_data->cm,
 				fp->stone,
 				raw_handler,
@@ -1537,11 +1591,15 @@ adios_read_flexpath_open(const char * fname,
 	for (int i=0; i<fp->size; i++) {
             reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
+        int * write_array = get_writer_array(fp)
+        reader_register.writer_array = write_array;
+
         CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
         attr_list writer_rank0_contact = attr_list_from_string(fp->bridges[0].contact);
         CMConnection conn = CMget_conn (fp_read_data->cm, writer_rank0_contact);
         CMwrite(conn, format, &reader_register);
 	free(recvbuf);
+        free(write_array);
         fp->req.condition = CMCondition_get(fp_read_data->cm, conn);
         /*  loosing connection here.  Close it later */
 
@@ -1569,29 +1627,17 @@ adios_read_flexpath_open(const char * fname,
             fp->bridges[i].opened = 0;
             fp->bridges[i].scheduled = 0;
         }
+        //We need the array for rank 0, but not here. I'm trying really hard to 
+        //have the logic determing the reader_writer coordination logic in a single
+        //place so we don't have issues when/if we change it later
+        int * temp_write = get_writer_array(fp);
+        free(temp_write);
         MPI_Barrier(MPI_COMM_WORLD);
     }
 
     adiosfile->fh = (uint64_t)fp;
     adiosfile->current_step = 0;
 
-    /* Init with a writer to get initial scalar
-       data so we can handle inq_var calls and
-       also populate the ADIOS_FILE struct. */
-    if (fp->size < fp->num_bridges) {
-    	int mystart = (fp->num_bridges/fp->size) * fp->rank;
-    	int myend = (fp->num_bridges/fp->size) * (fp->rank+1);
-    	fp->writer_coordinator = mystart;
-    	int z;
-    	for (z=mystart; z<myend; z++) {
-    	    build_bridge(&fp->bridges[z]);
-    	}
-    }
-    else {
-	int writer_rank = fp->rank % fp->num_bridges;
-	build_bridge(&fp->bridges[writer_rank]);
-	fp->writer_coordinator = writer_rank;
-    }
     //EVstore Setup
 
 

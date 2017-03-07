@@ -98,17 +98,11 @@ typedef struct _flexpath_dim_names {
     LIST_ENTRY(_flexpath_dim_names) entries;
 } FlexpathDimNames;
 
-typedef struct _fm_buffers {
-    unsigned char * buffer;
-    int timestep;
-    struct _fm_buffers * next;
-} fm_buffer;
-
 // structure for file data (metadata and buffer)
 typedef struct _flexpath_fm_structure {
     FMStructDescRec *format;
     int size;
-    fm_buffer * buffers;
+    unsigned char * buffer;
     FMFormat ioFormat;
     attr_list attrList;	
     LIST_HEAD(tableHead, _flexpath_name_table) nameList;
@@ -126,13 +120,18 @@ typedef struct _flexpath_write_file_data {
     // reader_info
     CMConnection reader_0_conn;
     uint64_t reader_file;
+    int num_readers_to_inform;
+    int * readers_to_inform_ranks;
     EVstone multiStone;
+    EVstone splitStone;
 
     EVsource dataSource;
+    EVsource scalarDataSource;
     EVsource offsetSource;
     EVsource finalizeSource;
 
     EVaction multi_action;
+    EVaction split_action;
     FlexpathStone* bridges;
     int numBridges;
     attr_list attrs;
@@ -285,97 +284,7 @@ data_free(void* eventData, void* clientData)
     free(eventData);
 }
 
-// message queue count
-int 
-queue_count(FlexpathQueueNode** queue) 
-{
-    if (*queue==NULL) {
-        return 0;
-    }
-    int count = 1;
-    FlexpathQueueNode* current = *queue;
-    while (current && current->next) {
-        count++;
-        current = current->next;
-    }
-    return count;
-}
 
-// message queue add to head
-void 
-threaded_enqueue(
-    FlexpathQueueNode **queue, 
-    void* item, 
-    FlexpathMessageType type, 
-    pthread_mutex_t *mutex, 
-    pthread_cond_t *condition,
-    int max_size) 
-{
-    pthread_mutex_lock(mutex);
-    if (max_size > 0) {
-	while (queue_count(queue) > max_size) {
-	    pthread_cond_wait(condition, mutex);
-	}
-    }
-    FlexpathQueueNode* newNode = malloc(sizeof(FlexpathQueueNode));
-    newNode->data = item;
-    newNode->type = type;
-    newNode->next = *queue;
-    *queue = newNode;
-    pthread_cond_broadcast(condition);
-    pthread_mutex_unlock(mutex);
-}
-
-// remove from tail of a message queue
-FlexpathQueueNode* 
-threaded_dequeue(
-    FlexpathQueueNode **queue, 
-    pthread_mutex_t *mutex, 
-    pthread_cond_t *condition, 
-    int signal_dequeue) 
-{
-    pthread_mutex_lock(mutex);
-    while (queue_count(queue) == 0) {
-        pthread_cond_wait(condition, mutex);
-    }
-    FlexpathQueueNode *tail;
-    FlexpathQueueNode *prev = NULL;
-    tail = *queue;
-    while (tail && tail->next) {
-        prev=tail;
-        tail=tail->next;
-    }
-    if (prev) {
-        prev->next = NULL;
-    } else {
-        *queue = NULL;
-    }
-    pthread_mutex_unlock(mutex);
-    if (signal_dequeue==1) {
-        pthread_cond_broadcast(condition);
-    }
-    return tail;
-}
-
-// peek at tail of message queue
-FlexpathQueueNode* 
-threaded_peek(FlexpathQueueNode** queue, 
-	      pthread_mutex_t *mutex, 
-	      pthread_cond_t *condition) 
-{
-    pthread_mutex_lock(mutex);
-    int q = queue_count(queue);
-    if (q == 0) {	
-	pthread_cond_wait(condition, mutex);
-    }
-    FlexpathQueueNode* tail;
-    tail = *queue;
-    while (tail && tail->next) {
-        tail=tail->next;
-    }
-    pthread_mutex_unlock(mutex);
-    return tail;
-}
 
 // add new var to a var list
 FlexpathVarNode* 
@@ -409,29 +318,6 @@ free_vars(FlexpathVarNode* queue)
     }
 }
 
-// search a var list
-FlexpathVarNode* 
-queue_contains(FlexpathVarNode* queue, const char* name, int rank) 
-{
-    int compare_rank = 0;
-    if (rank >= 0 ) {
-        compare_rank = 1;
-    }
-    FlexpathVarNode* tmp = queue;
-    while (tmp) {
-        if (strcmp(tmp->varName, name)==0) {
-            if (compare_rank) {
-                if (tmp->rank == rank) {
-                    return tmp;
-                }
-            } else {
-                return tmp;
-            }
-        }
-        tmp = tmp->next;
-    }
-    return NULL;
-}
 
 // returns a name with the dimension prepended
 static char*
@@ -537,110 +423,47 @@ get_var_offsets(struct adios_var_struct *v,
     }
     return ndims;
 }
-static char extern_string[] = "\
-    int get_reader_timestep(cod_exec_context ec);\n\
-    void gather_EVgroup(cod_exec_context ec);\n\
-";
-
-static cod_extern_entry extern_map[] = {
-    {"get_reader_timestep", (void*)(long)cod_get_reader_timestep},
-    {"gather_EVgroup", (void*)(long)cod_gather_EVgroup},
-    {(void*)0, (void*)0}
-};
 
 // creates multiqueue function to handle ctrl messages for given bridge stones 
+/* 
+    1) If reader_request
+        a) Check for data that matches reader timestamp
+        b) If timestamp is lower, discard
+        c) If timestamp matches, submit to request
+    
+*/
+
 char * multiqueue_action = "{\n\
     static int lowest_timestamp = 0;\n\
     attr_list attrs;\n\
-    if (EVcount_read_request() > 0) {\n\
-        read_request * msg = EVdata_read_request(0);\n\
-        if(msg.var_count == 0) {\n\
-            if(EVcount_evgroup() > 0) {\n\
-                evgroup *g = EVdata_evgroup(0); \n\
-                g->condition = msg->condition;\n\
-                EVsubmit(msg->process_return_id+1, g);\n\
-                EVdiscard_evgroup(0);\n\
-                EVdiscard_read_request(0);\n\
-            }\n\
-            else {\n\
-                gather_EVgroup();\n\
-            }\n\
-        }\n\
-        else {\n\
-            int timestep = get_reader_timestep();\n\
-            if(msg.timestep_requested > timestep) {\n\
-                if(EVcount_evgroup() > 0) {\n\
-                    evgroup *g = EVdata_evgroup(0); \n\
-                    g->condition = msg->condition;\n\
-                    EVsubmit(msg->process_return_id+1, g);\n\
-                    EVdiscard_evgroup(0);\n\
-                    EVdiscard_read_request(0);\n\
+    if(EVcount_read_request() > 0)\n\
+    {\n\
+        int i = 0;\n\
+        for(i = 0; i < EVcount_read_request(); i++)\n\
+        {\n\
+            read_request *read_msg = EVdata_read_request(0);\n\
+            int time_req = read_msg->timestep_requested;\n\
+            int j = 0;\n\
+            for(j = 0; j < EVcount_anonymous(); j++)\n\
+            {\n\
+                attrs = EVget_attrs_anonymous(j);\n\
+                int data_timestep = attr_ivalue(mine, \"fp_timestep\");\n\
+                if(data_timestep < time_req)\n\
+                {\n\
+                    EVdiscard_anonymous(j);\n\
+                    j--;\n\
                 }\n\
-
-            
-            
-    if (EVcount_evgroup() > 0) {\n\
-        evgroup *g = EVdata_evgroup(0); \n\
-        g->condition = c->condition;\n\
-        EVsubmit(c->process_id+1, g);\n\
-
-
-char *multiqueue_action = "{\n\
-    int found = 0;\n\
-    int flush_data_count = 0; \n\
-    int my_rank = -1;\n\
-    attr_list mine;\n\
-    if (EVcount_varMsg()>0) {\n\
-        EVdiscard_and_submit_varMsg(0, 0);\n\
-    }\n\
-    if (EVcount_update_step_msg() > 1) {\n\
-        EVdiscard_update_step_msg(0);\n\
-    }\n\
-    if (EVcount_drop_evgroup_msg()>0) {\n\
-       if (EVcount_evgroup()>0) {\n\
-          EVdiscard_evgroup(0);\n\
-       }\n\
-       EVdiscard_and_submit_drop_evgroup_msg(0,0);\n\
-    }\n\
-    if (EVcount_op_msg()>0) {\n\
-        op_msg *msg = EVdata_op_msg(0);\n\
-        mine = EVget_attrs_op_msg(0);\n\
-        found = attr_ivalue(mine, \"fp_dst_rank\");\n\
-        if (found > 0) {\n\
-            EVdiscard_and_submit_op_msg(found, 0);\n\
-        } else {\n\
-            EVdiscard_and_submit_op_msg(0,0);\n\
+                else if(data_timestep == time_req)\n\
+                {\n\
+                    int target = read_msg->process_return_id;\n\
+                    EVsubmit_anonymous(target + 1, j);\n\
+                    EVdiscard_read_request(i);\n\
+                    i--;\n\
+                }\n\
+            }\n\
         }\n\
     }\n\
-    if (EVcount_flush()>0) {\n\
-        flush *c = EVdata_flush(0);\n\
-         if (c->type == 2) { \n\
-             if (EVcount_evgroup()>0) {\n\
-               evgroup *g = EVdata_evgroup(0); \n\
-               g->condition = c->condition;\n\
-               EVsubmit(c->process_id+1, g);\n\
-               EVdiscard_flush(0);\n\
-             }\n\
-         }\n\
-         else if (c->type == 3) {\n\
-            if (EVcount_update_step_msg()>0) {\n\
-               update_step_msg *stepmsg = EVdata_update_step_msg(0);\n\
-               stepmsg->condition = c->condition;\n\
-               EVsubmit(c->process_id+1, stepmsg);\n\
-               EVdiscard_flush(0);\n\
-            }\n\
-          }\n\
-         else {\n\
-            EVdiscard_and_submit_flush(0,0);\n\
-            flush_data_count++;\n\
-         }\n\
-    }\n\
-    if (EVcount_anonymous()>0) {\n\
-        mine = EVget_attrs_anonymous(0);\n\
-        found = attr_ivalue(mine, \"fp_dst_rank\");\n\
-        EVdiscard_and_submit_anonymous(found+1,0);\n\
-    }\n\
- }";
+}";
 
 // sets a field based on data type
 void 
@@ -1181,130 +1004,6 @@ void* copy_buffer_without_array(void* buffer, FlexpathWriteFileData* fileData)
     return temp;
 }
 
-void 
-process_data_flush(FlexpathWriteFileData *fileData, 
-		   Flush_msg *flushMsg, 
-		   FlexpathQueueNode *dataNode)
-{
-    //fprintf(stderr, "writer:%d:processing flush for reader:%d:reader_step:%d:writer_step:%d\n", fileData->rank, flushMsg->process_id, fileData->readerStep, fileData->writerStep);
-    //fprintf(stderr, "writer:%d:processed flush for reader:%d:reader_step:%d:writer_step:%d\n", fileData->rank, flushMsg->process_id, fileData->readerStep, fileData->writerStep);
-}
-
-void
-process_var_msg(FlexpathWriteFileData *fileData, Var_msg *varMsg)
-{
-    fp_verbose(fileData, "process Var msg for variable \"%s\"\n", varMsg->var_name);
-    fileData->askedVars = add_var(fileData->askedVars, 
-				  strdup(varMsg->var_name), 
-				  NULL, 
-				  varMsg->process_id);
-}
-
-void
-drop_queued_data(FlexpathWriteFileData *fileData, int timestep)
-{
-    FlexpathQueueNode* node = threaded_dequeue(&fileData->dataQueue,
-					       &fileData->dataMutex,
-					       &fileData->dataCondition, 1);
-    FMfree_var_rec_elements(fileData->fm->ioFormat, node->data);
-
-    drop_evgroup_msg *dropMsg = malloc(sizeof(drop_evgroup_msg));
-    dropMsg->step = fileData->readerStep;
-    int wait = CMCondition_get(flexpathWriteData.cm, NULL);
-    dropMsg->condition = wait;
-    fp_verbose(fileData, "******* Triggering drop MSG\n");
-    EVsubmit_general(fileData->dropSource, dropMsg, drop_evgroup_msg_free, fileData->attrs);
-    //EVsubmit_general(fileData->dropSource, dropMsg, NULL, fileData->attrs);
-    // Will have to change when not using ctrl thread.
-    /*TODO: REMOVE THE CONDITION WAIT IN THIS EXECUTION PATH*/
-    CMCondition_wait(flexpathWriteData.cm,  wait);
-    
-    fileData->readerStep++;
-}
-
-void
-process_finalize_msg(FlexpathWriteFileData *fileData, op_msg *finalize)
-{
-    fp_verbose(fileData, " Process Finalize msg, bridge %d, timestep %d\n", finalize->process_id, finalize->step);
-	
-    FlexpathQueueNode* node = threaded_dequeue(&fileData->dataQueue,
-					       &fileData->dataMutex,
-					       &fileData->dataCondition, 1);
-    FMfree_var_rec_elements(fileData->fm->ioFormat, node->data);
-
-    drop_evgroup_msg *dropMsg = malloc(sizeof(drop_evgroup_msg));
-    dropMsg->step = fileData->readerStep;
-    int wait = CMCondition_get(flexpathWriteData.cm, NULL);
-    dropMsg->condition = wait;
-    fp_verbose(fileData, "******* Triggering drop MSG\n");
-    EVsubmit_general(fileData->dropSource, dropMsg, drop_evgroup_msg_free, fileData->attrs);
-    //EVsubmit_general(fileData->dropSource, dropMsg, NULL, fileData->attrs);
-    // Will have to change when not using ctrl thread.
-    CMCondition_wait(flexpathWriteData.cm,  wait);
-}
-
-
-static int 
-var_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
-{
-    FlexpathWriteFileData* fileData = (FlexpathWriteFileData*) client_data;
-    Var_msg* msg = (Var_msg*) vevent;
-    fp_verbose(fileData, " var_msg received and queued\n");
-    EVtake_event_buffer(cm, vevent);
-    threaded_enqueue(&fileData->controlQueue, msg, VAR, 
-		     &fileData->controlMutex, &fileData->controlCondition, -1);
-    return 0;
-}
-
-
-// processes messages from control queue
-void 
-control_thread(void *arg) 
-{
-    FlexpathWriteFileData *fileData = (FlexpathWriteFileData*)arg;
-    int rank = fileData->rank;
-    FlexpathQueueNode *controlMsg;
-    FlexpathQueueNode *dataNode;
-    while (1) {
-//	fp_verbose(fileData, " Control thread waiting on msg\n");
-	if ((controlMsg = threaded_dequeue(&fileData->controlQueue, 
-	    &fileData->controlMutex, &fileData->controlCondition, 0))) {
-//	    fp_verbose(fileData, " Control thread got a msg\n");
-	    if (controlMsg->type==VAR) {
-		Var_msg *varMsg = (Var_msg*) controlMsg->data;
-		process_var_msg(fileData, varMsg);
-		EVreturn_event_buffer(flexpathWriteData.cm,controlMsg->data);
-	    }
-	    else if (controlMsg->type==DATA_FLUSH) {
-		Flush_msg *flushMsg = (Flush_msg*)controlMsg->data;
-		dataNode = threaded_peek(&fileData->dataQueue, 
-					 &fileData->dataMutex, 
-					 &fileData->dataCondition);
-		process_data_flush(fileData, flushMsg, dataNode);
-
-	    }
-	    else if (controlMsg->type==OPEN) {
-                op_msg *open = (op_msg*) controlMsg->data;
-		process_open_msg(fileData, open);                
-		EVreturn_event_buffer(flexpathWriteData.cm, open);
-            }
-	    else if (controlMsg->type==FINALIZE) {
-                op_msg *open = (op_msg*) controlMsg->data;
-		process_finalize_msg(fileData, open);                
-		EVreturn_event_buffer(flexpathWriteData.cm, open);
-            }
-	    else if (controlMsg->type==CLOSE) {
-                op_msg* close = (op_msg*) controlMsg->data;
-		process_close_msg(fileData, close);
-		EVreturn_event_buffer(flexpathWriteData.cm, close);
-	    }
-	    else {
-		log_error("control_thread: Unrecognized Control Message\n");
-	    }
-	}
-    }
-    return;
-}
 
 // adds an open file handle to global open file list
 void 
@@ -1349,8 +1048,6 @@ stone_close_handler(CManager cm, CMConnection conn, int closed_stone, void *clie
 			return;
 		    }
 		}
-		/* no bridges in this file still open, drop all data */
-		drop_queued_data(file, -1);
 	    }
 	}
         file = file->next;
@@ -1371,8 +1068,17 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     recv_buf = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
     for (int i = 0; i < msg->contact_count; i++) {
         strcpy(&recv_buf[i*CONTACT_LENGTH], msg->contacts[i]);
+        //Writer_reader_information, done this way to keep the determining logic in one place (currently on the reader side)
+        if(msg->writer_array[i] == fileData->rank)
+        {
+            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, ++(fileData->num_readers_to_inform));
+            fileData->readers_to_inform_ranks[fileData->num_readers_to_inform - 1] = i;
+        }
     }
+
     *recv_buf_ptr = recv_buf;
+
+
     CMCondition_signal(cm, msg->condition);
 }
 
@@ -1383,8 +1089,9 @@ adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method
     // global data structure creation
     flexpathWriteData.rank = -1;
     flexpathWriteData.openFiles = NULL;
-    
+
     // setup CM
+    setenv("CMSelfFormats", "1", 1);
     flexpathWriteData.cm = CManager_create();
     atom_t CM_TRANSPORT = attr_atom_from_string("CM_TRANSPORT");
     char * transport = getenv("CMTransport");
@@ -1404,9 +1111,6 @@ adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method
 	add_attr(listen_list, CM_TRANSPORT, Attr_String, (attr_value)strdup(transport));
 	CMlisten_specific(flexpathWriteData.cm, listen_list);
     }
-    
-    // configuration setup
-    setenv("CMSelfFormats", "1", 1);
     
     // fork communications thread
     int forked = CMfork_comm_thread(flexpathWriteData.cm);   
@@ -1471,7 +1175,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     // send out contact string
     char * contact = attr_list_to_string(CMget_contact_list(flexpathWriteData.cm));
     fileData->multiStone = EValloc_stone(flexpathWriteData.cm);
-    fileData->sinkStone = EValloc_stone(flexpathWriteData.cm);
+    fileData->splitStone = EValloc_stone(flexpathWriteData.cm);
     sprintf(&sendmsg[0], "%d:%s", fileData->multiStone, contact);
     MPI_Gather(sendmsg, CONTACT_LENGTH, MPI_CHAR, recv_buff, 
         CONTACT_LENGTH, MPI_CHAR, 0, (fileData->mpiComm));
@@ -1551,9 +1255,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     //generate multiqueue function that sends formats or all data based on flush msg
 
-    FMStructDescList queue_list[] = {evgroup_format_list,
-                                     finalize_close_msg_format_list,
-				     data_format_list,
+    FMStructDescList queue_list[] = {data_format_list,
 				     NULL};
 
 
@@ -1564,17 +1266,22 @@ adios_flexpath_open(struct adios_file_struct *fd,
 						  fileData->multiStone, 
 						  q_action_spec, 
 						  NULL);
+    fileData->split_action = EVassoc_split_action(flexpathWriteData.cm, fileData->splitStone, NULL);
 
     fileData->dataSource = EVcreate_submit_handle(flexpathWriteData.cm, 
 						  fileData->multiStone, 
 						  fileData->fm->format);						 
 
+    fileData->scalarDataSource = EVcreate_submit_handle(flexpathWriteData.cm,
+                                                        fileData->splitStone,
+                                                        fileData->fm->format);
+
     fileData->offsetSource = EVcreate_submit_handle(flexpathWriteData.cm, 
-						    fileData->multiStone, 
+						    fileData->splitStone, 
 						    evgroup_format_list);
 
     fileData->finalizeSource = EVcreate_submit_handle(flexpathWriteData.cm,
-						  fileData->multiStone, 
+						  fileData->splitStone, 
 						  finalize_close_msg_format_list);
 
 
@@ -1598,6 +1305,15 @@ adios_flexpath_open(struct adios_file_struct *fd,
 			    fileData->multi_action, 
 			    i+1, 
 			    fileData->bridges[i].myNum);
+    }
+
+    //Set up split stone
+    for(int i = 0; i < fileData->num_readers_to_inform; ++i)
+    {
+        EVaction_add_split_target(flexpathWriteData.cm, 
+                                  fileData->splitStone, 
+                                  fileData->split_action, 
+                                  fileData->bridges[fileData->readers_to_inform_ranks[i]].myNum);
     }
 
     FMContext my_context = create_local_FMcontext();
@@ -1820,10 +1536,12 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
 extern void 
 adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *method) 
 {
-    fp_verbose(fileData, " adios_flexpath_close called\n");
 
     FlexpathWriteFileData *fileData = find_open_file(method->group->name);
-    fileData->attrs = set_dst_rank_atom(fileData->attrs, fileData->designated_reader);
+
+    fp_verbose(fileData, " adios_flexpath_close called\n");
+
+    fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
     
     // now gather offsets and send them via MPI to root
     evgroup *gp = malloc(sizeof(evgroup));    
@@ -1837,14 +1555,20 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     } else {    
         exchange_dimension_data(fd, gp, fileData);
     }   
-    EVsubmit_general(fileData->offsetSource, gp, evgroup_msg_free, fileData->attrs);
+
 
 
     void* temp = copy_buffer_without_array(fileData->fm->buffer, fileData);
    
-    fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
     fileData->attrs = set_only_scalars_atom(fileData->attrs, 1);
-    EVsubmit_general(fileData->dataSource, temp, NULL, fileData->attrs);
+
+    //Submit the messages that will get forwarded on immediately to the designated readers
+    for(int i = 0; i < fileData->num_readers_to_inform; i++)
+    {
+        fileData->attrs = set_dst_rank_atom(fileData->attrs, fileData->readers_to_inform_ranks[i]);
+        EVsubmit_general(fileData->offsetSource, gp, evgroup_msg_free, fileData->attrs);
+        EVsubmit_general(fileData->scalarDataSource, temp, NULL, fileData->attrs);
+    }
     free(temp);
 
     fileData->attrs = set_only_scalars_atom(fileData->attrs, 0);
@@ -1859,20 +1583,13 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 {
     FlexpathWriteFileData* fileData = flexpathWriteData.openFiles;
     fp_verbose(fileData, "adios_flexpath_finalize called\n");
+    fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
     while(fileData) {
-
-	update_step_msg *stepmsg = malloc(sizeof(update_step_msg));
-	stepmsg->finalized = 1;
-	stepmsg->step = fileData->writerStep - 1;
-	stepmsg->condition = -1;
-	EVsubmit_general(fileData->stepSource, stepmsg, update_step_msg_free, fileData->attrs);
-
-        pthread_mutex_lock(&fileData->dataMutex);
-        while (fileData->dataQueue != NULL) {
-	    fp_verbose(fileData, " Wait in flexpath finalize\n");
-	    pthread_cond_wait(&fileData->dataCondition, &fileData->dataMutex);
-	}
-	pthread_mutex_unlock(&fileData->dataMutex);
+        finalize_close_msg end_msg;
+        end_msg.finalize = 1;
+        end_msg.close = 1;
+        if(fileData->num_readers_to_inform > 0)
+	    EVsubmit_general(fileData->finalizeSource, &end_msg, NULL, fileData->attrs);
 
 	fileData->finalized = 1;
 	fileData = fileData->next;	    
