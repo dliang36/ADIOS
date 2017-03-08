@@ -122,6 +122,9 @@ typedef struct _flexpath_write_file_data {
     uint64_t reader_file;
     int num_readers_to_inform;
     int * readers_to_inform_ranks;
+    //We need to hold the full list somewhere, but this can be freed
+    int total_num_readers;
+    int * reader_array;
     EVstone multiStone;
     EVstone splitStone;
     EVstone sinkStone;
@@ -179,6 +182,20 @@ static char *opRepList[OPLEN] = { "_plus_", "_minus_", "_mult_", "_div_", "_dot_
 FlexpathWriteData flexpathWriteData;
 
 /**************************** Function Definitions *********************************/
+static void
+create_inform_reader_array(FlexpathWriteFileData *fileData)
+{
+    for(int i = 0; i < fileData->total_num_readers; i++)
+    {
+        if(fileData->reader_array[i] == fileData->rank)
+        {
+            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, ++(fileData->num_readers_to_inform));
+            fileData->readers_to_inform_ranks[fileData->num_readers_to_inform - 1] = i;
+
+            fp_verbose(fileData, "Num readers to inform: %d\t\tLast reader: %d\n", fileData->num_readers_to_inform, i);
+        }
+    }
+}
 
 static void 
 reverse_dims(uint64_t *dims, int len)
@@ -1092,14 +1109,15 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     char *recv_buf;
     char ** recv_buf_ptr = CMCondition_get_client_data(cm, msg->condition);
     recv_buf = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
+    fp_verbose(fileData, "Reader Register handler called!\n");
+    int total_num_readers;
+    int * reader_array;
+    fileData->total_num_readers = msg->contact_count;
+    fileData->reader_array = malloc(sizeof(int) * fileData->total_num_readers);
+    memcpy(fileData->reader_array, msg->writer_array, sizeof(int) * fileData->total_num_readers);
     for (int i = 0; i < msg->contact_count; i++) {
         strcpy(&recv_buf[i*CONTACT_LENGTH], msg->contacts[i]);
         //Writer_reader_information, done this way to keep the determining logic in one place (currently on the reader side)
-        if(msg->writer_array[i] == fileData->rank)
-        {
-            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, ++(fileData->num_readers_to_inform));
-            fileData->readers_to_inform_ranks[fileData->num_readers_to_inform - 1] = i;
-        }
     }
 
     *recv_buf_ptr = recv_buf;
@@ -1229,12 +1247,23 @@ adios_flexpath_open(struct adios_file_struct *fd,
         CMCondition_wait(flexpathWriteData.cm, condition);
         /* recv_buff and fileData->numBridges have been filled in by the reader_register_handler */
         MPI_Bcast(&fileData->numBridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&fileData->total_num_readers, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(recv_buff, fileData->numBridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
+        MPI_Bcast(fileData->reader_array, fileData->total_num_readers, MPI_INT, 0, MPI_COMM_WORLD);
+
+        create_inform_reader_array(fileData);
+
+
         unlink(writer_info_filename);
     } else {
         MPI_Bcast(&fileData->numBridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        MPI_Bcast(&fileData->total_num_readers, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        fileData->reader_array = malloc(fileData->total_num_readers * sizeof(int));
         recv_buff = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
         MPI_Bcast(recv_buff, fileData->numBridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
+        MPI_Bcast(fileData->reader_array, fileData->total_num_readers, MPI_INT, 0, MPI_COMM_WORLD);
+        create_inform_reader_array(fileData);
+        /*Could get rid of the old array here, but maybe not*/
     }
 
     int stone_num;
@@ -1639,8 +1668,11 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 	fileData = fileData->next;	    
     }
 
-    fp_verbose(fileData, "Finished all waits! Exiting finalize method now!\n");
+    //fp_verbose(fileData, "Finished all waits! Exiting finalize method now!\n");
 
+    //volatile int qur = 0;
+    //while(qur == 0) { /*Change qur in debugger */ }
+    //MPI_Barrier(MPI_COMM_WORLD);
 }
 
 // provides unknown functionality

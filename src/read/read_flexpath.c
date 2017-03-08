@@ -1837,7 +1837,6 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     if(fp->last_writer_step == fp->mystep)
     {
         fp_verbose(fp, "Received the writer_finalized message! Reader returning err_end_of_stream!\n");
-        send_finalize_msg(fp);
         adios_errno = err_end_of_stream;
         return err_end_of_stream;
     }
@@ -1877,6 +1876,7 @@ int adios_read_flexpath_close(ADIOS_FILE * fp)
     data has already been copied over to ADIOS_VARINFO structs
     that the user maintains a copy of.
     */
+    send_finalize_msg(file);
     
     pthread_mutex_lock(&(file->queue_mutex));
     timestep_seperated_var_list * curr = file->ts_var_list;
