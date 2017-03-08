@@ -71,6 +71,7 @@ typedef struct _bridge_info
 {
     EVstone bridge_stone;
     EVsource read_source;
+    EVsource finalize_source;
     int their_num;
     char *contact;
     int created;
@@ -159,6 +160,7 @@ typedef struct _flexpath_reader_file
     int num_bridges;
     bridge_info *bridges;
     int writer_coordinator;
+    int writer_coordinator_end;
 
     int num_vars;
     char ** var_namelist;
@@ -212,6 +214,11 @@ void build_bridge(bridge_info* bridge)
                                     bridge->bridge_stone,
                                     read_request_format_list);
 
+        bridge->finalize_source = 
+            EVcreate_submit_handle(fp_read_data->cm,
+                                    bridge->bridge_stone,
+                                    finalize_close_msg_format_list);
+
 	bridge->created = 1;
     }
 }
@@ -231,15 +238,15 @@ get_writer_array(flexpath_reader_file * fp)
         else
             the_array[i] = fp->rank % fp->num_bridges;
     }
+    fp_verbose(fp, "Finished setting up writer array\n");
 
     //Do normal reading setup, here.  I wanted to do everything in one place
     //to reduce errors if we have to change things later on.
     if (fp->size < fp->num_bridges) {
-    	int mystart = the_array[fp->rank];
-    	int myend = (fp->num_bridges/fp->size) * (fp->rank+1);
-    	fp->writer_coordinator = mystart;
+    	fp->writer_coordinator = the_array[fp->rank];
+    	fp->writer_coordinator_end = (fp->num_bridges/fp->size) * (fp->rank+1);
     	int z;
-    	for (z=mystart; z<myend; z++) {
+    	for (z=fp->writer_coordinator; z<fp->writer_coordinator_end; z++) {
     	    build_bridge(&fp->bridges[z]);
     	}
     }
@@ -247,8 +254,10 @@ get_writer_array(flexpath_reader_file * fp)
 	int writer_rank = the_array[fp->rank];
 	build_bridge(&fp->bridges[writer_rank]);
 	fp->writer_coordinator = writer_rank;
+        fp->writer_coordinator_end = writer_rank + 1;
     }
 
+    fp_verbose(fp, "Finished setting up our writer_coordinator and building the appropriate bridge\n");
 
     return the_array;
 }
@@ -965,9 +974,20 @@ setup_flexpath_vars(FMField *f, int *num)
 /*****************Messages to writer procs**********************/
 
 void
-send_finalize_msg(flexpath_reader_file *fp, int destination)
+send_finalize_msg(flexpath_reader_file *fp)
 {
-    /*TODO: make this work one day!!*/
+    if((fp->rank / fp->num_bridges) == 0)
+    {
+        for(int i = fp->writer_coordinator; i < fp->writer_coordinator_end; i++)
+        {
+            finalize_close_msg msg;
+            msg.finalize = 1;
+            msg.close = 1;
+            msg.final_timestep = fp->last_writer_step;
+            EVsubmit(fp->bridges[i].finalize_source, &msg, NULL);
+        }
+    }
+    
 }
 
 void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
@@ -1000,6 +1020,7 @@ void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
         exit(1);
     }
 
+    fp_verbose(fp, "Submitting read request to %d\n", destination);
     EVsubmit(fp->bridges[destination].read_source, msg, NULL);
     if(use_condition) {
 	fp_verbose(fp, "WAIT in read_request_msg send\n");
@@ -1106,9 +1127,11 @@ finalize_msg_handler(CManager cm, void * vevent, void * client_data, attr_list a
 {
     ADIOS_FILE *adiosfile = client_data;
     flexpath_reader_file * fp = (flexpath_reader_file*)adiosfile->fh;
+    finalize_close_msg_ptr msg = (finalize_close_msg_ptr)vevent;
     fp_verbose(fp, "Received the finalize message from the writer\n");
     pthread_mutex_lock(&(fp->queue_mutex));
     fp->writer_finalized = 1;
+    fp->last_writer_step = msg->final_timestep;
     pthread_cond_signal(&(fp->queue_condition));
     pthread_mutex_unlock(&(fp->queue_mutex));
     return 0;
@@ -1233,6 +1256,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 {
     ADIOS_FILE *adiosfile = client_data;
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
+    fp_verbose(fp, "Received data message!\n");
     int writer_rank;
     int timestep;
     int only_scalars = 0;
@@ -1256,6 +1280,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     /* setting up initial vars from the format list that comes along with the
        message. Message contains both an FFS description and the data. */
     if (fp->num_vars == 0) {
+        fp_verbose(fp, "Setting up initial vars!\n");
 	int var_count = 0;
 
         pthread_mutex_lock(&(fp->queue_mutex));
@@ -1316,6 +1341,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 
 	// Has the var been scheduled
 	if (var->sel) {
+            fp_verbose(fp, "Vars have been scheduled for timestep:%d\n", timestep);
 	    if (var->sel->type == ADIOS_SELECTION_WRITEBLOCK) {
 		if (num_dims == 0) { // writeblock selection for scalar
 		    if (var->sel->u.block.index == writer_rank) {
@@ -1406,18 +1432,11 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
         f++;
     }
 
-    //Waking up the receiving thread if we are blocking waiting for this to go
-    pthread_mutex_lock(&(fp->queue_mutex));
-    timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
-    ts_var_list->is_list_filled = 1;
-    pthread_cond_signal(&(fp->queue_condition));
-    pthread_mutex_unlock(&(fp->queue_mutex));
-
-
     //We need this to differentiate between real data messages and the global metadata hack message that gets sent with every
     //EVgroup message on the writer side
     if(!only_scalars)
     {
+        fp_verbose(fp, "Reporting received data for timestep:%d\n", timestep);
         fp->req.num_completed++;
         /* fprintf(stderr, "\t\treader rank:%d:step:%d:num_completed:%d:num_pending:%d\n", */
         /* 	    fp->rank, fp->mystep, fp->req.num_completed, fp->req.num_pending); */
@@ -1427,6 +1446,15 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
             CMCondition_signal(fp_read_data->cm, fp->req.condition);
         }
 
+    }
+    else
+    {
+        fp_verbose(fp, "Only scalars message received for:%d\n", timestep);
+        pthread_mutex_lock(&(fp->queue_mutex));
+        timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
+        ts_var_list->is_list_filled = 1;
+        pthread_cond_signal(&(fp->queue_condition));
+        pthread_mutex_unlock(&(fp->queue_mutex));
     }
 
     free_fmstructdesclist(struct_list);
@@ -1520,7 +1548,7 @@ get_writer_contact_info_filesystem(const char *fname)
     int size = buf.st_size;
     
     char *buffer = malloc(size);
-    fread(buffer, size, 1, fp_in);
+    int temp = fread(buffer, size, 1, fp_in);
     fclose(fp_in);
     return buffer;
 }
@@ -1556,6 +1584,9 @@ adios_read_flexpath_open(const char * fname,
     adios_errno = 0;
     fp->stone = EValloc_stone(fp_read_data->cm);
     fp->comm = comm;
+    
+    adiosfile->fh = (uint64_t)fp;
+    adiosfile->current_step = 0;
 
     MPI_Comm_size(fp->comm, &(fp->size));
     MPI_Comm_rank(fp->comm, &(fp->rank));
@@ -1583,6 +1614,9 @@ adios_read_flexpath_open(const char * fname,
     sprintf(&data_contact_info[0], "%d:%s", fp->stone, string_list);
     free(string_list);
 
+    //volatile int qur = 0;
+    //while(qur == 0) { /*Change qur in debugger */ }
+    //MPI_Barrier(MPI_COMM_WORLD);
     char * recvbuf;
     if (fp->rank == 0) {
         char *contact_info;
@@ -1651,9 +1685,11 @@ adios_read_flexpath_open(const char * fname,
         /* wait for "go" from writer */
         fp_verbose(fp, "waiting for go message in read_open, WAITING, condition %d\n", fp->req.condition);
         CMCondition_wait(fp_read_data->cm, fp->req.condition);
+        fp_verbose(fp, "finished wait for go message in read_open\n");
         MPI_Barrier(MPI_COMM_WORLD);
     } else {
         /* not rank 0 */
+        fp_verbose(fp, "About to run the normal setup for bridges before MPI_Gather operation!\n");
         char *this_side_contact_buffer;
         MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
                    CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
@@ -1672,20 +1708,21 @@ adios_read_flexpath_open(const char * fname,
             fp->bridges[i].opened = 0;
             fp->bridges[i].scheduled = 0;
         }
+        fp_verbose(fp, "About to get writer_array after creating the bridges!\n");
         //We need the array for rank 0, but not here. I'm trying really hard to 
         //have the logic determing the reader_writer coordination logic in a single
         //place so we don't have issues when/if we change it later
         int * temp_write = get_writer_array(fp);
         free(temp_write);
         MPI_Barrier(MPI_COMM_WORLD);
+        fp_verbose(fp, "Past the MPI_Barrier on the non-root side\n");
     }
 
-    adiosfile->fh = (uint64_t)fp;
-    adiosfile->current_step = 0;
 
     //EVstore Setup
 
 
+    fp_verbose(fp, "About to lock mutex and access timstep_seperated_var_list\n");
     // requesting initial data.
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
@@ -1788,7 +1825,7 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     }
 
     //If we don't have the scalar data or if we haven't received a finalized message, wait
-    while(ts_var_list->is_list_filled == 0 && !fp->writer_finalized) 
+    while(ts_var_list->is_list_filled == 0 && (fp->last_writer_step != fp->mystep)) 
     {
         fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", fp->mystep);
         pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
@@ -1797,9 +1834,10 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     fp_verbose(fp, "Finished wait on global data for timestep: %d\n", fp->mystep);
 
     //If finalized, err_end_of_stream
-    if(fp->writer_finalized)
+    if(fp->last_writer_step == fp->mystep)
     {
         fp_verbose(fp, "Received the writer_finalized message! Reader returning err_end_of_stream!\n");
+        send_finalize_msg(fp);
         adios_errno = err_end_of_stream;
         return err_end_of_stream;
     }

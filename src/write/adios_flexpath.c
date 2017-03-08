@@ -124,6 +124,7 @@ typedef struct _flexpath_write_file_data {
     int * readers_to_inform_ranks;
     EVstone multiStone;
     EVstone splitStone;
+    EVstone sinkStone;
 
     EVsource dataSource;
     EVsource scalarDataSource;
@@ -132,6 +133,7 @@ typedef struct _flexpath_write_file_data {
 
     EVaction multi_action;
     EVaction split_action;
+    EVaction finalize_action;
     FlexpathStone* bridges;
     int numBridges;
     attr_list attrs;
@@ -142,6 +144,7 @@ typedef struct _flexpath_write_file_data {
     int readerStep;
     int writerStep; // how many times has the writer called closed?
     int finalized; // have we finalized?
+    int final_condition;
 
     FlexpathFMStructure* fm;
     FlexpathVarNode* askedVars;
@@ -438,24 +441,32 @@ char * multiqueue_action = "{\n\
     attr_list attrs;\n\
     if(EVcount_read_request() > 0)\n\
     {\n\
+        printf(\"We have a read request!\\n\");\n\
         int i = 0;\n\
         for(i = 0; i < EVcount_read_request(); i++)\n\
         {\n\
-            read_request *read_msg = EVdata_read_request(0);\n\
-            int time_req = read_msg->timestep_requested;\n\
-            int j = 0;\n\
+            read_request *read_msg;\n\
+            int time_req;\n\
+            read_msg = EVdata_read_request(0);\n\
+            time_req = read_msg->timestep_requested;\n\
+            int j;\n\
             for(j = 0; j < EVcount_anonymous(); j++)\n\
             {\n\
+                int data_timestep;\n\
                 attrs = EVget_attrs_anonymous(j);\n\
-                int data_timestep = attr_ivalue(mine, \"fp_timestep\");\n\
+                data_timestep = attr_ivalue(attrs, \"fp_timestep\");\n\
+                printf(\"Read request timestep: \\\%d\\t\\tData_timestep:\\\%d\\n\", time_req, data_timestep);\n\
                 if(data_timestep < time_req)\n\
                 {\n\
+                    printf(\"Discarding junk\\n\");\n\
                     EVdiscard_anonymous(j);\n\
                     j--;\n\
                 }\n\
                 else if(data_timestep == time_req)\n\
                 {\n\
-                    int target = read_msg->process_return_id;\n\
+                    printf(\"Submitting to target!\\n\");\n\
+                    int target;\n\
+                    target = read_msg->process_return_id;\n\
                     EVsubmit_anonymous(target + 1, j);\n\
                     EVdiscard_read_request(i);\n\
                     i--;\n\
@@ -463,7 +474,22 @@ char * multiqueue_action = "{\n\
             }\n\
         }\n\
     }\n\
+    if(EVcount_finalize_close_msg() > 0)\n\
+    {\n\
+        EVdiscard_and_submit_finalize_close_msg(0, 0);\n\
+    }\n\
 }";
+
+
+static int
+finalize_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
+{
+    FlexpathWriteFileData * fp = (FlexpathWriteFileData *) client_data;
+    CMCondition_signal(flexpathWriteData.cm, fp->final_condition);
+
+    fp_verbose(fp, "Finalize msg handler called and signalled!\n");
+
+}
 
 // sets a field based on data type
 void 
@@ -1173,9 +1199,11 @@ adios_flexpath_open(struct adios_file_struct *fd,
     }
         
     // send out contact string
-    char * contact = attr_list_to_string(CMget_contact_list(flexpathWriteData.cm));
     fileData->multiStone = EValloc_stone(flexpathWriteData.cm);
     fileData->splitStone = EValloc_stone(flexpathWriteData.cm);
+    fileData->sinkStone = EValloc_stone(flexpathWriteData.cm);
+
+    char * contact = attr_list_to_string(CMget_contact_list(flexpathWriteData.cm));
     sprintf(&sendmsg[0], "%d:%s", fileData->multiStone, contact);
     MPI_Gather(sendmsg, CONTACT_LENGTH, MPI_CHAR, recv_buff, 
         CONTACT_LENGTH, MPI_CHAR, 0, (fileData->mpiComm));
@@ -1255,7 +1283,9 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     //generate multiqueue function that sends formats or all data based on flush msg
 
-    FMStructDescList queue_list[] = {data_format_list,
+    FMStructDescList queue_list[] = {read_request_format_list,
+                                     finalize_close_msg_format_list,
+                                     data_format_list,
 				     NULL};
 
 
@@ -1267,6 +1297,12 @@ adios_flexpath_open(struct adios_file_struct *fd,
 						  q_action_spec, 
 						  NULL);
     fileData->split_action = EVassoc_split_action(flexpathWriteData.cm, fileData->splitStone, NULL);
+
+    fileData->finalize_action = EVassoc_terminal_action(flexpathWriteData.cm, 
+                                                        fileData->sinkStone, 
+                                                        finalize_close_msg_format_list,
+                                                        finalize_msg_handler, 
+                                                        fileData);
 
     fileData->dataSource = EVcreate_submit_handle(flexpathWriteData.cm, 
 						  fileData->multiStone, 
@@ -1286,10 +1322,10 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
 
     //link multiqueue to sink
-    /*
+    
     EVaction_set_output(flexpathWriteData.cm, fileData->multiStone, 
         fileData->multi_action, 0, fileData->sinkStone);
-    */
+    
 	
     //Set each output to the rank + 1 and preserve the 0 output for a sink stone just in case
     //we need it for control one day
@@ -1583,17 +1619,28 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 {
     FlexpathWriteFileData* fileData = flexpathWriteData.openFiles;
     fp_verbose(fileData, "adios_flexpath_finalize called\n");
-    fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
+    //fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
     while(fileData) {
         finalize_close_msg end_msg;
         end_msg.finalize = 1;
         end_msg.close = 1;
+        end_msg.final_timestep = fileData->writerStep;
         if(fileData->num_readers_to_inform > 0)
 	    EVsubmit_general(fileData->finalizeSource, &end_msg, NULL, fileData->attrs);
+
+        /*TODO:Very Bad!!! This means that our finalization is not going to be able to 
+               differentiate between streams...but the API doesn't support that yet, so...*/
+        fp_verbose(fileData, "Waiting for the reader to be done!\n");
+        fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
+        CMCondition_wait(flexpathWriteData.cm, fileData->final_condition);
+        fp_verbose(fileData, "Finished Wait for reader cohort to be finished!\n");
 
 	fileData->finalized = 1;
 	fileData = fileData->next;	    
     }
+
+    fp_verbose(fileData, "Finished all waits! Exiting finalize method now!\n");
+
 }
 
 // provides unknown functionality

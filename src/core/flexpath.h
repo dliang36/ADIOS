@@ -47,6 +47,7 @@
 typedef struct _finalize_close_msg {
     int finalize;
     int close;
+    int final_timestep;
 } finalize_close_msg, * finalize_close_msg_ptr;
 
 
@@ -190,6 +191,7 @@ static FMField finalize_close_msg_field_list[] =
 {
     {"finalize", "integer", sizeof(int), FMOffset(finalize_close_msg_ptr, finalize)},
     {"close", "integer", sizeof(int), FMOffset(finalize_close_msg_ptr, close)},
+    {"final_timestep", "integer", sizeof(int), FMOffset(finalize_close_msg_ptr, final_timestep)},
     {NULL, NULL, 0, 0}
 };
 
