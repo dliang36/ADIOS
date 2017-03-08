@@ -335,7 +335,7 @@ create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
     {
         if(curr->timestep == timestep)
         {
-            fprintf(stderr, "Error: Already created the flexpath vars for timestep: %d!\n", timestep);
+            fp_verbose(fp, "Already created the timestep for timestep:%d\n", timestep);
             return;
         }
         curr = curr->next;
@@ -1314,6 +1314,12 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
+        if(ts_var_list == NULL)
+        {
+            fp_verbose(fp, "Created timestep in raw handler -- timestep:%d\n", timestep);
+            create_flexpath_var_for_timestep(fp, timestep);
+            ts_var_list = find_var_list(fp, timestep);
+        }
 	flexpath_var * var = find_fp_var(ts_var_list->var_list, unmangle);
         pthread_mutex_unlock(&(fp->queue_mutex));
 
@@ -1829,6 +1835,7 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     {
         fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", fp->mystep);
         pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
+        fp_verbose(fp, "Received signal! Last_writer_step:%d\t\tMystep:%d\n", fp->last_writer_step, fp->mystep);
     }
     pthread_mutex_unlock(&(fp->queue_mutex));
     fp_verbose(fp, "Finished wait on global data for timestep: %d\n", fp->mystep);

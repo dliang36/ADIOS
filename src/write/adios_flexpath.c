@@ -1307,6 +1307,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     // attach rank attr and add file to open list
     fileData->name = strdup(method->group->name); 
     add_open_file(fileData);
+    //Template for all other attrs set here
     atom_t rank_atom = attr_atom_from_string(FP_RANK_ATTR_NAME);
     add_int_attr(fileData->attrs, rank_atom, fileData->rank);   
 
@@ -1607,6 +1608,9 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     fp_verbose(fileData, " adios_flexpath_close called\n");
 
     fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
+
+    attr_list temp_attr_scalars = attr_copy_list(fileData->attrs);
+    attr_list temp_attr_noscalars = attr_copy_list(fileData->attrs);
     
     // now gather offsets and send them via MPI to root
     evgroup *gp = malloc(sizeof(evgroup));    
@@ -1625,20 +1629,21 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
 
     void* temp = copy_buffer_without_array(fileData->fm->buffer, fileData);
    
-    fileData->attrs = set_only_scalars_atom(fileData->attrs, 1);
+    temp_attr_scalars = set_only_scalars_atom(temp_attr_scalars, 1);
+    temp_attr_noscalars = set_only_scalars_atom(temp_attr_noscalars, 0);
 
     //Submit the messages that will get forwarded on immediately to the designated readers
     for(int i = 0; i < fileData->num_readers_to_inform; i++)
     {
-        fileData->attrs = set_dst_rank_atom(fileData->attrs, fileData->readers_to_inform_ranks[i]);
-        EVsubmit_general(fileData->offsetSource, gp, NULL, fileData->attrs);
-        EVsubmit_general(fileData->scalarDataSource, temp, NULL, fileData->attrs);
+        EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
+        EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
     }
     free(temp);
 
-    fileData->attrs = set_only_scalars_atom(fileData->attrs, 0);
-    EVsubmit_general(fileData->dataSource, fileData->fm->buffer, NULL, fileData->attrs);
+    EVsubmit_general(fileData->dataSource, fileData->fm->buffer, NULL, temp_attr_noscalars);
 
+    free_attr_list(temp_attr_scalars);
+    free_attr_list(temp_attr_noscalars);
     fileData->writerStep++;
 }
 
@@ -1670,9 +1675,6 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 
     //fp_verbose(fileData, "Finished all waits! Exiting finalize method now!\n");
 
-    //volatile int qur = 0;
-    //while(qur == 0) { /*Change qur in debugger */ }
-    //MPI_Barrier(MPI_COMM_WORLD);
 }
 
 // provides unknown functionality

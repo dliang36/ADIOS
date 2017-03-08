@@ -31,6 +31,10 @@ int main (int argc, char ** argv)
 
     adios_read_init_method(ADIOS_READ_METHOD_FLEXPATH, comm, "");
 
+    //volatile int qur = 0;
+    //while(qur == 0) { /* Do nothing until debugger gets here */ }
+    //MPI_Barrier(MPI_COMM_WORLD);
+
     ADIOS_SELECTION global_range_select;
     //if(rank == 0){
     global_range_select.type=ADIOS_SELECTION_BOUNDINGBOX;
