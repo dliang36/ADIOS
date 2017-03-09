@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+//! size of the X dimension
+#define NX_DIM 10
 
 #define DBG_TEST_FAILED_STR		"TEST_FAILED"
 #define DBG_TEST_PASSED_STR		"TEST_PASSED"

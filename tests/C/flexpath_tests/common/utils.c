@@ -189,6 +189,9 @@ diag_t get_options(struct adios_tsprt_opts * p_tsprt_opts, int argc, char ** arg
 			break;
 		case 't':
 			cvalue = optarg;
+                        char * underscore = strchr(argv[0], '_');
+                        underscore++;
+                        char file_name[200];
 			// by default I set adios options to be verbosed
 			// TODO might be changed to the actual option
 			strcpy(p_tsprt_opts->adios_options, "verbose=4; show hidden_attrs");
@@ -196,11 +199,13 @@ diag_t get_options(struct adios_tsprt_opts * p_tsprt_opts, int argc, char ** arg
 			if (strcmp(cvalue, "flx") == 0){
 				p_tsprt_opts->method = ADIOS_READ_METHOD_FLEXPATH;
 				strcpy(p_tsprt_opts->transport, "FLEXPATH");
-				strcpy(p_tsprt_opts->xml_adios_init_filename, "test_config_flex.xml");
+                                sprintf(file_name, "test_config_%s_flex.xml", underscore);
+				strcpy(p_tsprt_opts->xml_adios_init_filename, file_name);
 			} else if (strcmp(cvalue, "mpi") == 0) {
 				p_tsprt_opts->method = ADIOS_READ_METHOD_BP;
 				strcpy(p_tsprt_opts->transport, "MPI");
-				strcpy(p_tsprt_opts->xml_adios_init_filename, "test_config_mpi.xml");
+                                sprintf(file_name, "test_config_%s_mpi.xml", underscore);
+				strcpy(p_tsprt_opts->xml_adios_init_filename, file_name);
 			} else {
 				diag = DIAG_ERR;
 			}

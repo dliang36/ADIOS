@@ -10,6 +10,9 @@
 #include "mpi.h"
 #include "adios.h"
 
+#include "misc.h"
+#include "utils.h"
+#include "test_common.h"
 /*************************************************************/
 /*          Example of writing arrays in ADIOS               */
 /*                                                           */
@@ -25,13 +28,17 @@ int main (int argc, char ** argv)
     MPI_Comm    comm = MPI_COMM_WORLD;
 
     int64_t     adios_handle;
+    struct adios_tsprt_opts adios_opts;
+    int err_count = 0;
+
+    GET_ENTRY_OPTIONS(adios_opts, "Runs writers. It is recommended to run as many writers as readers.");
 
     MPI_Init (&argc, &argv);
     MPI_Comm_rank (comm, &rank);
     MPI_Comm_size (comm, &size);
-    
-    strcpy (filename, "arrays");
-    adios_init ("arrays.xml", comm);
+
+    SET_ERROR_IF_NOT_ZERO(adios_init(adios_opts.xml_adios_init_filename, comm), err_count);
+    RET_IF_ERROR(err_count, rank);
     
     int test_scalar = rank * 1000;
     int group_num;

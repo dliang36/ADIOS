@@ -19,7 +19,6 @@
 #include "misc.h"
 #include "utils.h"
 #include "test_common.h"
-#include "cfg.h"
 
 #include <stdio.h>
 #include <assert.h>
