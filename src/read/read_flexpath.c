@@ -1627,6 +1627,7 @@ adios_read_flexpath_open(const char * fname,
     if (fp->rank == 0) {
         char *contact_info;
 	recvbuf = (char*)malloc(sizeof(char)*CONTACT_LENGTH*(fp->size));
+        fp_verbose(fp, "Running MPI_Gather for reader contact information!\n");
         MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
                    CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
 
@@ -1662,6 +1663,7 @@ adios_read_flexpath_open(const char * fname,
         fp->num_bridges = num_bridges;
 
         // broadcast writer contact info to all reader ranks
+        fp_verbose(fp, "Broadcasting writer data to all ranks!\n");
         MPI_Bcast(&fp->num_bridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
         MPI_Bcast(send_buffer, fp->num_bridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);

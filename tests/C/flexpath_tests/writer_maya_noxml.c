@@ -17,7 +17,7 @@
 
 #include "misc.h"
 #include "utils.h"
-#include "cfg.h"
+#include "maya_cfg.h"
 #include "test_common.h"
 
 #include <stdio.h>

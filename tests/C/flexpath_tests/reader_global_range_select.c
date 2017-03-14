@@ -19,6 +19,10 @@
 #include "adios.h"
 #include "public/adios_read.h"
 
+#include "misc.h"
+#include "utils.h"
+#include "test_common.h"
+
 int main (int argc, char ** argv) 
 {
     int         rank, j;
@@ -26,10 +30,15 @@ int main (int argc, char ** argv)
     double      *t;
     MPI_Comm    comm = MPI_COMM_WORLD;
 
+    struct err_counts err = { 0, 0};
+    struct adios_tsprt_opts adios_opts;
+    
+    GET_ENTRY_OPTIONS(adios_opts, "Runs readers. It is recommended to run as many readers as writers.");
     MPI_Init (&argc, &argv);
     MPI_Comm_rank (comm, &rank);
 
-    adios_read_init_method(ADIOS_READ_METHOD_FLEXPATH, comm, "");
+    SET_ERROR_IF_NOT_ZERO(adios_read_init_method(adios_opts.method, comm, adios_opts.adios_options), err.adios);
+    RET_IF_ERROR(err.adios, rank);
 
     //volatile int qur = 0;
     //while(qur == 0) { /* Do nothing until debugger gets here */ }
@@ -52,10 +61,7 @@ int main (int argc, char ** argv)
     //fprintf(stderr, "app got here\n");
     /* schedule_read of a scalar. */    
     int test_scalar = -1;
-    ADIOS_FILE* afile = adios_read_open("arrays", 
-                                         ADIOS_READ_METHOD_FLEXPATH, 
-                                         comm,
-                                         ADIOS_LOCKMODE_NONE, 0.0);
+    ADIOS_FILE *afile = adios_read_open(FILE_NAME,adios_opts.method, comm, ADIOS_LOCKMODE_NONE, 0.0);
     
     int ii = 0;
     while(adios_errno != err_end_of_stream){

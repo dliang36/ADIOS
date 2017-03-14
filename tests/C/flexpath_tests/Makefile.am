@@ -3,9 +3,12 @@ AM_CPPFLAGS += -I$(top_builddir)/src/public -I$(top_srcdir)/src -I$(top_srcdir)/
 
 AUTOMAKE_OPTIONS = no-dependencies subdir-objects
 
-noinst_PROGRAMS = writer_global reader_global writer_scalar reader_scalar \
+PROGS = writer_global reader_global writer_scalar reader_scalar \
                     writer_global_noxml reader_global_noxml writer_local reader_local \
-                    writer_global_range_select reader_global_range_select cleanup
+                    writer_global_range_select reader_global_range_select \
+                    writer_maya_noxml reader_maya_noxml
+
+noinst_PROGRAMS = $(PROGS) cleanup
 
 writer_global_SOURCES = writer_global.c ./common/utils.c
 writer_global_LDADD = $(top_builddir)/src/libadios.a $(ADIOSLIB_LDADD)
@@ -42,8 +45,17 @@ reader_global_range_select_SOURCES = reader_global_range_select.c ./common/utils
 reader_global_range_select_LDADD = $(top_builddir)/src/libadios.a $(ADIOSLIB_LDADD)
 reader_global_range_select_LDFLAGS = $(ADIOSLIB_LDFLAGS) $(ADIOSLIB_EXTRA_LDFLAGS)
 
+writer_maya_noxml_SOURCES = writer_maya_noxml.c ./common/utils.c
+writer_maya_noxml_LDADD = $(top_builddir)/src/libadios.a $(ADIOSLIB_LDADD)
+writer_maya_noxml_LDFLAGS = $(ADIOSLIB_LDFLAGS) $(ADIOSLIB_EXTRA_LDFLAGS)
+reader_maya_noxml_SOURCES = reader_maya_noxml.c ./common/utils.c
+reader_maya_noxml_LDADD = $(top_builddir)/src/libadios.a $(ADIOSLIB_LDADD)
+reader_maya_noxml_LDFLAGS = $(ADIOSLIB_LDFLAGS) $(ADIOSLIB_EXTRA_LDFLAGS)
+
 cleanup:
 	rm *.o
+	mkdir -p bin
+	mv $(PROGS) ./bin
 
 CLEANFILES = *.bp
 CC=$(MPICC)

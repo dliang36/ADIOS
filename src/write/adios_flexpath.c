@@ -1229,6 +1229,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     //TODO: recv_buff has a small memory leak here because of register_reader_handler
     // rank 0 prints contact info to file
     if (fileData->rank == 0) {
+        printf("Adios file_name: %s\tend\n", fd->name);
         sprintf(writer_info_filename, "%s_%s", fd->name, "writer_info.txt");
         sprintf(writer_info_tmp, "%s_%s", fd->name, "writer_info.tmp");
         FILE* writer_info = fopen(writer_info_filename, "w");

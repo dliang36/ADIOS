@@ -46,7 +46,7 @@ int main (int argc, char ** argv)
       for (i = 0; i < NX; i++)
         t[i] = rank * NX + i + 100*group_num;
     
-      adios_open (&adios_handle, "temperature", filename, "w", comm);
+      adios_open (&adios_handle, "temperature", FILE_NAME, "w", comm);
     
       test_scalar++;
       adios_write (adios_handle, "NX", &NX);
