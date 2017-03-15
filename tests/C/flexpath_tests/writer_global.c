@@ -82,6 +82,7 @@ int main(int argc, char ** argv){
 	adios_finalize(rank);
 	MPI_Finalize();
 
+
 	return DIAG_OK;
 }
 

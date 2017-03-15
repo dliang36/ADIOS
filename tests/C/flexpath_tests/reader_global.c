@@ -171,6 +171,7 @@ just_clean:
 	sel = NULL;
 	free(t);
 	t = NULL;
+        *t = 42.0;
 	free(t_ref);
 	t_ref = NULL;
 
