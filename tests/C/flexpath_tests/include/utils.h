@@ -19,6 +19,8 @@ extern diag_t get_data_size(int *shape, int shape_elem_count, int* data_size);
 extern diag_t get_maya_var_name(char *prefix, int number);
 extern diag_t gen_maya_var_name(char *buf, int buf_size, char *maya_var_pfx, int number);
 
+//extern void test_finalize(MPI_Comm comm);
+
 
 
 #endif /* UTILS_H_ */

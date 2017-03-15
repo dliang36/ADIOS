@@ -453,12 +453,12 @@ get_var_offsets(struct adios_var_struct *v,
     
 */
 
+
 char * multiqueue_action = "{\n\
     static int lowest_timestamp = 0;\n\
     attr_list attrs;\n\
     if(EVcount_read_request() > 0)\n\
     {\n\
-        printf(\"We have a read request!\\n\");\n\
         int i = 0;\n\
         for(i = 0; i < EVcount_read_request(); i++)\n\
         {\n\
@@ -472,16 +472,13 @@ char * multiqueue_action = "{\n\
                 int data_timestep;\n\
                 attrs = EVget_attrs_anonymous(j);\n\
                 data_timestep = attr_ivalue(attrs, \"fp_timestep\");\n\
-                printf(\"Read request timestep: \\\%d\\t\\tData_timestep:\\\%d\\n\", time_req, data_timestep);\n\
                 if(data_timestep < time_req)\n\
                 {\n\
-                    printf(\"Discarding junk\\n\");\n\
                     EVdiscard_anonymous(j);\n\
                     j--;\n\
                 }\n\
                 else if(data_timestep == time_req)\n\
                 {\n\
-                    printf(\"Submitting to target!\\n\");\n\
                     int target;\n\
                     target = read_msg->process_return_id;\n\
                     EVsubmit_anonymous(target + 1, j);\n\
@@ -1229,7 +1226,6 @@ adios_flexpath_open(struct adios_file_struct *fd,
     //TODO: recv_buff has a small memory leak here because of register_reader_handler
     // rank 0 prints contact info to file
     if (fileData->rank == 0) {
-        printf("Adios file_name: %s\tend\n", fd->name);
         sprintf(writer_info_filename, "%s_%s", fd->name, "writer_info.txt");
         sprintf(writer_info_tmp, "%s_%s", fd->name, "writer_info.tmp");
         FILE* writer_info = fopen(writer_info_filename, "w");

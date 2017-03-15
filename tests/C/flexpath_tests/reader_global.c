@@ -44,6 +44,10 @@ int main (int argc, char **argv){
 	MPI_Init( &argc, &argv);
 	MPI_Comm_rank (comm, &rank);
 
+        /*volatile int qur = 0;
+        while(qur == 0) {  Wait for gdb  }
+        MPI_Barrier(comm);*/
+
 	// depending on the method
 	SET_ERROR_IF_NOT_ZERO(adios_read_init_method(adios_opts.method, comm, adios_opts.adios_options), err.adios);
 	RET_IF_ERROR(err.adios, rank);
@@ -84,7 +88,7 @@ int main (int argc, char **argv){
 	avi = adios_inq_var (adios_handle, "NX");
 	if (!avi){
 		p_error("rank %d: Quitting ... (%d) %s\n", rank, adios_errno, adios_errmsg());
-		CLOSE_ADIOS_READER(adios_handle, adios_opts.method);
+		CLOSE_ADIOS_READER(adios_handle, adios_opts.method)
 		return DIAG_ERR;
 	}
 
@@ -138,17 +142,16 @@ int main (int argc, char **argv){
 	int i = 0;
 	for (i = 0; i < NX; ++i) {
 		if (t[i] != t_ref[i]) {
-			p_test_failed("%s: rank %d: for t[%d] (expected %.1f, got %.1f)\n",
-					test_result.name, rank, i, t_ref[i], t[i]);
+			p_test_failed(test_result.name, rank);
 			test_result.result = TEST_FAILED;
 			break;
 		}
 	}
 
 	if (TEST_PASSED == test_result.result)
-		p_test_passed("%s: rank %d\n", test_result.name, rank);
+		p_test_passed(test_result.name, rank);
 	else 
-	    p_test_failed("%s: rank %d\n", test_result.name, rank);
+	    p_test_failed(test_result.name, rank);
 
 
 	adios_release_step(adios_handle);

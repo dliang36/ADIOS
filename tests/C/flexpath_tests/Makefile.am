@@ -56,7 +56,8 @@ cleanup:
 	rm *.o
 	mkdir -p bin
 	mv $(PROGS) ./bin
+	cp *.xml ./bin
 
-CLEANFILES = *.bp
+CLEANFILES = *.bp ./bin/*
 CC=$(MPICC)
 EXTRA_DIST = *.xml readme.txt

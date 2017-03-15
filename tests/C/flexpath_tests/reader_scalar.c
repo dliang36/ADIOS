@@ -110,10 +110,10 @@ int main (int argc, char **argv){
 		}
 
 		if( rank == my_scalar){
-			p_test_passed("%s: rank %d\n", test_result.name, rank);
+			p_test_passed(test_result.name, rank);
 			test_result.result = TEST_PASSED;
 		} else {
-			p_test_failed("%s: rank %d: my_scalar=%d. (rank != my_scalar)\n", test_result.name, rank,  my_scalar);
+			p_test_failed(test_result.name, rank);
 			test_result.result = TEST_FAILED;
 		}
 	//}

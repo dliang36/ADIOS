@@ -1538,13 +1538,14 @@ adios_read_flexpath_open_file(const char * fname, MPI_Comm comm)
 }
 
 char *
-get_writer_contact_info_filesystem(const char *fname)
+get_writer_contact_info_filesystem(const char *fname, flexpath_reader_file * fp)
 {
     char writer_info_filename[200];
 
     sprintf(writer_info_filename, "%s_%s", fname, WRITER_CONTACT_FILE);
-
-    FILE *fp_in = fopen(writer_info_filename, "r");
+    FILE *fp_in;
+redo:
+    fp_in = fopen(writer_info_filename, "r");
     while (!fp_in) {
         //CMsleep(fp_read_data->cm, 1);
         fp_in = fopen(writer_info_filename, "r");
@@ -1552,6 +1553,12 @@ get_writer_contact_info_filesystem(const char *fname)
     struct stat buf;
     fstat(fileno(fp_in), &buf);
     int size = buf.st_size;
+    if(size == 0)
+    {
+        fp_verbose(fp, "Size of writer contact file is zero, but it shouldn't be! Retrying!\n");
+        goto redo;
+    }
+    //printf("Size: %d\n", size);
     
     char *buffer = malloc(size);
     int temp = fread(buffer, size, 1, fp_in);
@@ -1631,7 +1638,7 @@ adios_read_flexpath_open(const char * fname,
         MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
                    CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
 
-        contact_info = get_writer_contact_info_filesystem(fname);
+        contact_info = get_writer_contact_info_filesystem(fname, fp);
         
         char in_contact[CONTACT_LENGTH] = "";
         int num_bridges = 0;
@@ -1641,6 +1648,7 @@ adios_read_flexpath_open(const char * fname,
         char *send_buffer = malloc(CONTACT_LENGTH);
         void *writer_filedata;
         char *point = contact_info;
+        //fprintf(stderr, "%s", point);
         sscanf(point, "%d\n", &return_condition);
         point = index(point, '\n') + 1;
         sscanf(point, "%p\n", &writer_filedata);

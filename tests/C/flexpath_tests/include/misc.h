@@ -100,7 +100,7 @@ struct adios_tsprt_opts {
 	//! the transport e.g., "FLEXPATH", "MPI"
 	char transport[256];
 	//! can be used to store adios options as used by adios_read_init_method
-	//! 0=quieet, ..., 4=debug
+	//! 0=quiet, ..., 4=debug
 	char adios_options[256];
 };
 

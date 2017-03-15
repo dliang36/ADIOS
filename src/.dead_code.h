@@ -1,5 +1,16 @@
 /*Writer Side */
 
+/*
+
+Printf's in the cod code below that I don't want to remove just yet
+        printf(\"We have a read request!\\n\");\n\
+
+                printf(\"Read request timestep: \\\%d\\t\\tData_timestep:\\\%d\\n\", time_req, data_timestep);\n\
+                    printf(\"Discarding junk\\n\");\n\
+                    printf(\"Submitting to target!\\n\");\n\
+*/
+
+
 // search a var list
 FlexpathVarNode* 
 queue_contains(FlexpathVarNode* queue, const char* name, int rank) 

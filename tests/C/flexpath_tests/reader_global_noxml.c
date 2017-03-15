@@ -151,14 +151,14 @@ int main (int argc, char **argv){
 	int i = 0;
 	for(i=0; i < NX; ++i){
 		if( t[i] != t_ref[i] ){
-			p_test_failed("%s: rank %d: for t[%d] (expected %.1f, got %.1f)\n", test_result.name, rank,  i, t_ref[i], t[i] );
+			p_test_failed(test_result.name, rank);
 			test_result.result = TEST_FAILED;
 			break;
 		}
 	}
 
 	if (TEST_PASSED == test_result.result)
-		p_test_passed("%s: rank %d\n", test_result.name, rank);
+		p_test_passed(test_result.name, rank);
 
 just_clean:
 	// clean everything

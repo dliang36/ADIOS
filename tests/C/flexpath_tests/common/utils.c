@@ -182,8 +182,11 @@ diag_t get_options(struct adios_tsprt_opts * p_tsprt_opts, int argc, char ** arg
 	// assume that no showing help
 	*p_show_help = 0;
 
-	while( (c = getopt(argc, argv, "ht:")) != -1){
+	while( (c = getopt(argc, argv, "dht:")) != -1){
 		switch(c){
+                case 'd':
+                        //Here we set the debugging information on...
+			strcpy(p_tsprt_opts->adios_options, "verbose=4");
 		case 'h':
 			*p_show_help = 1;
 			break;
@@ -192,10 +195,6 @@ diag_t get_options(struct adios_tsprt_opts * p_tsprt_opts, int argc, char ** arg
                         char * underscore = strchr(argv[0], '_');
                         underscore++;
                         char file_name[200];
-			// by default I set adios options to be verbosed
-			// TODO might be changed to the actual option
-			strcpy(p_tsprt_opts->adios_options, "verbose=4; show hidden_attrs");
-
 			if (strcmp(cvalue, "flx") == 0){
 				p_tsprt_opts->method = ADIOS_READ_METHOD_FLEXPATH;
 				strcpy(p_tsprt_opts->transport, "FLEXPATH");
@@ -320,4 +319,22 @@ diag_t gen_maya_var_name(char *buf, int buf_size, char *maya_var_pfx, int number
 
 	return DIAG_OK;
 }
+
+void safe_print(int rank, char * the_string)
+{
+    if(rank == 0)
+        printf("%s", the_string);
+}
+
+/*void test_finalize(MPI_Comm comm)
+{
+    int rank;
+    MPI_Comm_rank (comm, &rank);
+    MPI_Barrier(comm);
+
+    safe_print(rank, "End of Test!\n");
+}
+*/
+
+
 
