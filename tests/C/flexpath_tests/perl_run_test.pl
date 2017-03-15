@@ -35,61 +35,68 @@ chdir 'bin' or die "Cannot change directory to bin: $!";
 
 foreach (@groups)
 {
-    my $reader_prog = "./reader_" . $_;
-    my $writer_prog = "./writer_" . $_;
-    my $reader_return;
-    my $writer_return;
-#2>&1
-    defined(my $reader_pid = fork) or die "Cannot fork $!";
-    unless($reader_pid)
+    my @num_procs = (4, 4, 5, 3, 3, 5, 7, 1, 1, 7);
+    my $i, my $j;
+    for($i = 0; $i < (@num_procs / 2); $i++)
     {
-        #Child process is here
-        exec ("mpirun -n 2 $reader_prog -t flx " . "$reader_output");
-        die "Can't exec reader! $!";
-    }
+        sleep 1;
+        my $num_readers = $num_procs[$i * 2];
+        my $num_writers = $num_procs[$i * 2 + 1];
 
-    defined(my $writer_pid = fork) or die "Cannot fork $!";
-    unless($writer_pid)
-    {
-        #Child process is here
-        exec ("mpirun -n 2 $writer_prog -t flx " . "$writer_output");
-        die "Can't exec writer! $!";
-    }
-    
-    my $i;
-    for($i = 0; $i < 2; $i++)
-    {
-        my $returned_pid = wait;
-        #print "Returned PID: $returned_pid\n";
-        
-        if($returned_pid == $reader_pid)
+        my $reader_prog = "./reader_" . $_;
+        my $writer_prog = "./writer_" . $_;
+        my $reader_return;
+        my $writer_return;
+        defined(my $reader_pid = fork) or die "Cannot fork $!";
+        unless($reader_pid)
         {
-            $reader_return = $? >> 8;
-            kill 9, $writer_pid if $reader_return == 139;
-            #print "Reader returned: $reader_return\n";
+            #Child process is here
+            exec ("mpirun -n $num_readers $reader_prog -t flx " . "$reader_output");
+            die "Can't exec reader! $!";
         }
-        elsif($returned_pid == $writer_pid)
+
+        defined(my $writer_pid = fork) or die "Cannot fork $!";
+        unless($writer_pid)
         {
-            $writer_return = $? >> 8;
-            kill 9, $reader_pid if $writer_return == 139;
-            #print "Writer returned: $writer_return\n";
+            #Child process is here
+            exec ("mpirun -n $num_writers $writer_prog -t flx " . "$writer_output");
+            die "Can't exec writer! $!";
+        }
+        
+        for($j = 0; $j < 2; $j++)
+        {
+            my $returned_pid = wait;
+            #print "Returned PID: $returned_pid\n";
+            
+            if($returned_pid == $reader_pid)
+            {
+                $reader_return = $? >> 8;
+                kill 9, $writer_pid if $reader_return == 139;
+                #print "Reader returned: $reader_return\n";
+            }
+            elsif($returned_pid == $writer_pid)
+            {
+                $writer_return = $? >> 8;
+                kill 9, $reader_pid if $writer_return == 139;
+                #print "Writer returned: $writer_return\n";
+            }
+            else
+            {
+                print "Weird return PID: $returned_pid\n";
+            }
+        }
+
+        if($reader_return == 0 and $writer_return == 0)
+        {
+            print "$_ with $num_readers readers and $num_writers writers: PASSED!\n";
         }
         else
         {
-            print "Weird return PID: $returned_pid\n";
+            print "$_ with $num_readers readers and $num_writers writers: FAILED!\t";
+            print "Reader failed with code: $reader_return\t" if $reader_return;
+            print "Writer failed with code: $writer_return\t" if $writer_return;
+            print "\n";
         }
-    }
-
-    if($reader_return == 0 and $writer_return == 0)
-    {
-        print "$_: PASSED!\n";
-    }
-    else
-    {
-        print "$_: FAILED!\t";
-        print "Reader failed with code: $reader_return\t" if $reader_return;
-        print "Writer failed with code: $writer_return\t" if $writer_return;
-        print "\n";
     }
 }
 
