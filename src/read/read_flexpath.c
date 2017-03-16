@@ -20,6 +20,7 @@
 #include <ctype.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 // evpath libraries
 #include <ffs.h>
@@ -230,15 +231,27 @@ void build_bridge(bridge_info* bridge)
 static int *
 get_writer_array(flexpath_reader_file * fp)
 {
+
+    fp_verbose(fp, "fp->size: %d\n", fp->size);
     int * the_array = malloc(fp->size * sizeof(int));
     for(int i = 0; i < fp->size; i++)
     {
         if(fp->size < fp->num_bridges)
             the_array[i] = (fp->num_bridges/fp->size) * i;
         else
-            the_array[i] = fp->rank % fp->num_bridges;
+            the_array[i] = i % fp->num_bridges;
     }
-    fp_verbose(fp, "Finished setting up writer array\n");
+    char array_string[500] = {"Finished setting up writer array: "};
+    char temp_string[10];
+    for(int i = 0; i < fp->size; i++)
+    {
+
+        char copy_str[500];
+        strcpy(copy_str, array_string);
+        sprintf(array_string, "%s %d", copy_str, the_array[i]);
+    }
+
+    fp_verbose(fp, "%s\n", array_string);
 
     //Do normal reading setup, here.  I wanted to do everything in one place
     //to reduce errors if we have to change things later on.
@@ -1043,6 +1056,16 @@ add_var_to_read_message(flexpath_reader_file *fp, int destination, char *varname
         }
         if (index == -1) {
             fp->num_sendees+=1;
+            if(fp->num_sendees > fp->num_bridges)
+            {
+                fprintf(stderr, "Fatal Error: trying to send to too many writers!\n");
+                for(int j = 0; j < fp->num_sendees - 1; j++)
+                {
+                    fprintf(stderr, "Iteration: %d\t\tSendee: %d\n", j, fp->sendees[j]);
+                }
+                fprintf(stderr, "Destination: %d\n", destination);
+                exit(1);
+            }
             fp->sendees=realloc(fp->sendees, fp->num_sendees*sizeof(int));
             fp->var_read_requests=realloc(fp->var_read_requests, fp->num_sendees*sizeof(read_request_msg));
             fp->sendees[fp->num_sendees-1] = destination;
@@ -1347,8 +1370,9 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 
 	// Has the var been scheduled
 	if (var->sel) {
-            fp_verbose(fp, "Vars have been scheduled for timestep:%d\n", timestep);
+            //fp_verbose(fp, "Vars have been scheduled for timestep:%d\n", timestep);
 	    if (var->sel->type == ADIOS_SELECTION_WRITEBLOCK) {
+                //fp_verbose(fp, "Var is type selection_writeblock for scalars!\n");
 		if (num_dims == 0) { // writeblock selection for scalar
 		    if (var->sel->u.block.index == writer_rank) {
 			void *tmp_data = get_FMfieldAddr_by_name(f,
@@ -1358,6 +1382,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 		    }
 		}
 		else { // writeblock selection for arrays
+                    //fp_verbose(fp, "Var is type selection_writeblock for arrays!\n");
 		    if (var->sel->u.block.index == writer_rank) {
 			var->array_size = var->type_size;
 			int i;
@@ -1391,6 +1416,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	    }
 	    else if (var->sel->type == ADIOS_SELECTION_BOUNDINGBOX) {
 
+                //fp_verbose(fp, "Var is type selection_boundingbox for arrays!\n");
 		if (var->ndims > 0) { // arrays
 		    int i;
 		    global_var *gv = find_gbl_var(fp->current_global_info->vars,
@@ -1401,6 +1427,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 								  writer_rank,
 								  var->num_displ);
 		    if (disp) { // does this writer hold a chunk we've asked for
+                        //fp_verbose(fp, "Var is in the displacement, it should have data that we've asked for!\n");
 
 			//print_displacement(disp, fp->rank);
 
@@ -1668,7 +1695,7 @@ adios_read_flexpath_open(const char * fname,
             fp->bridges[num_bridges].scheduled = 0;
             num_bridges++;
         }
-        fp->num_bridges = num_bridges;
+        fp->num_bridges = --num_bridges;
 
         // broadcast writer contact info to all reader ranks
         fp_verbose(fp, "Broadcasting writer data to all ranks!\n");
@@ -1885,8 +1912,10 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
 int adios_read_flexpath_close(ADIOS_FILE * fp)
 {
     flexpath_reader_file *file = (flexpath_reader_file*)fp->fh;
-    //TODO: Send close message to each opened link
 
+    //AllGather the last writer step so that we don't prematurely send away the writers
+    int * recv_buff = malloc(sizeof(int) * fp_read_data->size);
+    MPI_Allgather(&file->last_writer_step, 1, MPI_INT, recv_buff, 1, MPI_INT, fp_read_data->comm);
 
     /*
     start to cleanup.  Clean up var_lists for now, as the
@@ -2101,7 +2130,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
         chunk->user_buf = data;
         fpvar->start_position = 0;
 	int writer_index = fpvar->sel->u.block.index;
-	if (writer_index > fp->num_bridges) {
+	if (writer_index >= fp->num_bridges) {
 	    adios_error(err_out_of_bound,
 			"No process exists on the writer side matching the index.\n");
 	    return err_out_of_bound;

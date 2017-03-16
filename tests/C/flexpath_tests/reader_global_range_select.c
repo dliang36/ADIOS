@@ -122,6 +122,8 @@ int main (int argc, char ** argv)
 
     adios_read_finalize_method(ADIOS_READ_METHOD_FLEXPATH);
 
+    printf("Past the close and exiting, rank: %d!\n", rank);
+
     MPI_Finalize ();
 
     return 0;

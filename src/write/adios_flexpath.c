@@ -1373,6 +1373,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     //Set up split stone
     for(int i = 0; i < fileData->num_readers_to_inform; ++i)
     {
+        fp_verbose(fileData, "Adding split target to inform: %d\n", fileData->readers_to_inform_ranks[i]);
         EVaction_add_split_target(flexpathWriteData.cm, 
                                   fileData->splitStone, 
                                   fileData->split_action, 
@@ -1630,11 +1631,8 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     temp_attr_noscalars = set_only_scalars_atom(temp_attr_noscalars, 0);
 
     //Submit the messages that will get forwarded on immediately to the designated readers
-    for(int i = 0; i < fileData->num_readers_to_inform; i++)
-    {
-        EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
-        EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
-    }
+    EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
+    EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
     free(temp);
 
     EVsubmit_general(fileData->dataSource, fileData->fm->buffer, NULL, temp_attr_noscalars);

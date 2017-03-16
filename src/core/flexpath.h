@@ -35,8 +35,8 @@
 	    }
 #define fp_verbose(flxp_file, ...)                             \
             if(flxp_file->verbose) {    \
-		fprintf(stderr, "file %p: %s %d:", flxp_file, FLEXPATH_SIDE, flxp_file->rank); \
-		fprintf(stderr, __VA_ARGS__);			   \
+		fprintf(stdout, "file %p: %s %d:", flxp_file, FLEXPATH_SIDE, flxp_file->rank); \
+		fprintf(stdout, __VA_ARGS__);			   \
             }
             
 
