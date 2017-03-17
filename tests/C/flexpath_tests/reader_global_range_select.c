@@ -27,11 +27,14 @@ int main (int argc, char ** argv)
 {
     int         rank, j;
     int         NX, NY; 
+    int         writer_size;
     double      *t;
     MPI_Comm    comm = MPI_COMM_WORLD;
+    diag_t      return_val;
 
     struct err_counts err = { 0, 0};
     struct adios_tsprt_opts adios_opts;
+    struct test_info test_result = { TEST_PASSED, "global_range_select" };
     
     GET_ENTRY_OPTIONS(adios_opts, "Runs readers. It is recommended to run as many readers as writers.");
     MPI_Init (&argc, &argv);
@@ -44,20 +47,6 @@ int main (int argc, char ** argv)
     //while(qur == 0) { /* Do nothing until debugger gets here */ }
     //MPI_Barrier(MPI_COMM_WORLD);
 
-    ADIOS_SELECTION global_range_select;
-    //if(rank == 0){
-    global_range_select.type=ADIOS_SELECTION_BOUNDINGBOX;
-    global_range_select.u.bb.start = malloc(sizeof(uint64_t)*2);
-    global_range_select.u.bb.count = malloc(sizeof(uint64_t)*2);
-    (global_range_select.u.bb.start)[0] = 0;
-    (global_range_select.u.bb.count)[0] = 4;
-    (global_range_select.u.bb.start)[1] = 0;
-    (global_range_select.u.bb.count)[1] = 40;
-    global_range_select.u.bb.ndim = 2;
-
-    ADIOS_SELECTION scalar_block_select;
-    scalar_block_select.type = ADIOS_SELECTION_WRITEBLOCK;
-    scalar_block_select.u.block.index = rank;
     //fprintf(stderr, "app got here\n");
     /* schedule_read of a scalar. */    
     int test_scalar = -1;
@@ -69,31 +58,75 @@ int main (int argc, char ** argv)
         /* get a bounding box - rank 0 for now*/
         ADIOS_VARINFO* nx_info = adios_inq_var( afile, "NX");
         ADIOS_VARINFO* ny_info = adios_inq_var( afile, "NY");
+        ADIOS_VARINFO* writer_size_info = adios_inq_var( afile, "size");
 
-        if(nx_info->value) {
+        if(nx_info->value) 
+        {
             NX = *((int *)nx_info->value);
         }
-        if(ny_info->value){
+        else
+        {
+	    p_test_failed(test_result.name, rank);
+            return_val = DIAG_ERR;
+        }
+
+        if(ny_info->value)
+        {
             NY= *((int*)ny_info->value);
         }
+        else
+        {
+            p_test_failed(test_result.name, rank);
+            return_val = DIAG_ERR;
+        }
+
+        if(writer_size_info->value)
+        {
+            writer_size = *((int *)writer_size_info->value);
+        }
+        else
+        {
+            p_test_failed(test_result.name, rank);
+            return_val = DIAG_ERR;
+        }
+
+        int sel_index = rank % writer_size;
     
         //printf("\trank=%d: NX=%d\n", rank, NX);
         //printf("\trank=%d: NY=%d\n", rank, NY);
     
         /* Allocate space for the arrays */
-        int nelem = 160;
-        int arr_size = sizeof(double) * nelem;
+        ADIOS_SELECTION * global_range_select;
+        ADIOS_SELECTION * scalar_block_select;
+
+        int nelem = writer_size * NX * NY;
+        size_t arr_size = sizeof(double) * nelem;
         t = (double *) malloc (arr_size);
         memset(t, 0, arr_size);
         //fprintf(stderr, "t %p\n", t);
+
+        //I think this is correct
+        uint64_t * start_array = malloc(sizeof(uint64_t) * (NY + 1));
+        uint64_t * count_array = malloc(sizeof(uint64_t) * (NY + 1));
+        start_array[0] = 0;
+        count_array[0] = writer_size;
+        for(int k = 1; k < (NY + 1); ++k)
+        {
+            start_array[k] = 0;
+            count_array[k] = NX;
+        }
+
+        global_range_select = adios_selection_boundingbox((NY + 1), start_array, count_array);
+        scalar_block_select = adios_selection_writeblock(sel_index);
+
       
         /* Read the arrays */        
         adios_schedule_read (afile, 
-                             &global_range_select, 
+                             global_range_select, 
                              "var_2d_array", 
                              0, 1, t);
 	adios_schedule_read (afile,
-			     &scalar_block_select,
+			     scalar_block_select,
 			     "test_scalar",
 			     0, 1, &test_scalar);
 
@@ -101,6 +134,7 @@ int main (int argc, char ** argv)
     
         //sleep(20);
     
+        /*
         for(j=0; j<    (global_range_select.u.bb.count)[1]; j++) {    
 	    if (t[j] != rank * NX + j + 100*ii) {
 
@@ -111,6 +145,7 @@ int main (int argc, char ** argv)
 		fprintf(stderr, "]\n");
 	    }
 	}
+        */
         adios_release_step(afile);
         adios_advance_step(afile, 0, 30);
         ii++;
@@ -118,13 +153,17 @@ int main (int argc, char ** argv)
         //sleep(1);
     }
     //
-    adios_read_close(afile);
+just_clean:
+    // clean everything
+    //adios_selection_delete(sel);
+    //sel = NULL;
+    free(t);
+    t = NULL;
+    //free(t_ref);
+    //t_ref = NULL;
 
-    adios_read_finalize_method(ADIOS_READ_METHOD_FLEXPATH);
-
-    printf("Past the close and exiting, rank: %d!\n", rank);
-
-    MPI_Finalize ();
+close_adios:
+    CLOSE_ADIOS_READER(afile, adios_opts.method);
 
     return 0;
 }

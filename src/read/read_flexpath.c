@@ -255,20 +255,8 @@ get_writer_array(flexpath_reader_file * fp)
 
     //Do normal reading setup, here.  I wanted to do everything in one place
     //to reduce errors if we have to change things later on.
-    if (fp->size < fp->num_bridges) {
-    	fp->writer_coordinator = the_array[fp->rank];
-    	fp->writer_coordinator_end = (fp->num_bridges/fp->size) * (fp->rank+1);
-    	int z;
-    	for (z=fp->writer_coordinator; z<fp->writer_coordinator_end; z++) {
-    	    build_bridge(&fp->bridges[z]);
-    	}
-    }
-    else {
-	int writer_rank = the_array[fp->rank];
-	build_bridge(&fp->bridges[writer_rank]);
-	fp->writer_coordinator = writer_rank;
-        fp->writer_coordinator_end = writer_rank + 1;
-    }
+    fp->writer_coordinator = the_array[fp->rank];
+    build_bridge(&fp->bridges[fp->writer_coordinator]);
 
     fp_verbose(fp, "Finished setting up our writer_coordinator and building the appropriate bridge\n");
 
@@ -991,16 +979,26 @@ send_finalize_msg(flexpath_reader_file *fp)
 {
     if((fp->rank / fp->num_bridges) == 0)
     {
-        for(int i = fp->writer_coordinator; i < fp->writer_coordinator_end; i++)
+        int num_iterations = (fp->num_bridges / fp->size) + 1;
+
+        for(int i = 0; i < num_iterations; i++)
         {
+            int send_to = fp->rank + fp->size * i;
+            if(send_to >= fp->num_bridges)
+                break;
+
             finalize_close_msg msg;
             msg.finalize = 1;
             msg.close = 1;
             msg.final_timestep = fp->last_writer_step;
-            EVsubmit(fp->bridges[i].finalize_source, &msg, NULL);
+            //Create bridge if needed
+            if (!fp->bridges[send_to].created) {
+                build_bridge(&(fp->bridges[send_to]));
+	    }
+
+            EVsubmit(fp->bridges[send_to].finalize_source, &msg, NULL);
         }
     }
-    
 }
 
 void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
@@ -1056,16 +1054,6 @@ add_var_to_read_message(flexpath_reader_file *fp, int destination, char *varname
         }
         if (index == -1) {
             fp->num_sendees+=1;
-            if(fp->num_sendees > fp->num_bridges)
-            {
-                fprintf(stderr, "Fatal Error: trying to send to too many writers!\n");
-                for(int j = 0; j < fp->num_sendees - 1; j++)
-                {
-                    fprintf(stderr, "Iteration: %d\t\tSendee: %d\n", j, fp->sendees[j]);
-                }
-                fprintf(stderr, "Destination: %d\n", destination);
-                exit(1);
-            }
             fp->sendees=realloc(fp->sendees, fp->num_sendees*sizeof(int));
             fp->var_read_requests=realloc(fp->var_read_requests, fp->num_sendees*sizeof(read_request_msg));
             fp->sendees[fp->num_sendees-1] = destination;
@@ -1856,6 +1844,7 @@ int
 adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_sec)
 {    
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
+    MPI_Barrier(fp->comm);
     int count = 0;
 
     //Check to see if we have the next steps global metadata
@@ -1904,7 +1893,7 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     share_global_information(fp);
 
     //Wait for all readers to reach this step, this should change in extended version
-    MPI_Barrier(fp->comm);
+    //MPI_Barrier(fp->comm);
 
     return 0;
 }
@@ -1914,8 +1903,8 @@ int adios_read_flexpath_close(ADIOS_FILE * fp)
     flexpath_reader_file *file = (flexpath_reader_file*)fp->fh;
 
     //AllGather the last writer step so that we don't prematurely send away the writers
-    int * recv_buff = malloc(sizeof(int) * fp_read_data->size);
-    MPI_Allgather(&file->last_writer_step, 1, MPI_INT, recv_buff, 1, MPI_INT, fp_read_data->comm);
+    //int * recv_buff = malloc(sizeof(int) * fp_read_data->size);
+    //MPI_Allgather(&file->last_writer_step, 1, MPI_INT, recv_buff, 1, MPI_INT, fp_read_data->comm);
 
     /*
     start to cleanup.  Clean up var_lists for now, as the
@@ -1998,10 +1987,10 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
 	total_sent++;
 		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
 		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
+        fp->req.num_pending = batchcount;
 	send_read_msg(fp, i, 0);
 
 	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
-            fp->req.num_pending = batchcount;
 
 	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
             CMCondition_wait(fp_read_data->cm, fp->req.condition);

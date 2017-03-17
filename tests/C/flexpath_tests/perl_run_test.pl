@@ -39,7 +39,7 @@ foreach (@groups)
     my $i, my $j;
     for($i = 0; $i < (@num_procs / 2); $i++)
     {
-        sleep 1;
+        #sleep 1;
         my $num_readers = $num_procs[$i * 2];
         my $num_writers = $num_procs[$i * 2 + 1];
 
