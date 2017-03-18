@@ -1979,16 +1979,15 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     int total_sent = 0;
     fp->time_in = 0.00;
     fp->req.num_completed = 0;
-    fp->req.num_pending = FP_BATCH_SIZE;
+    fp->req.num_pending = num_sendees < FP_BATCH_SIZE ? num_sendees : FP_BATCH_SIZE;
     fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
+    
 
     for (i = 0; i<num_sendees; i++) {
-	batchcount++;
-	total_sent++;
 		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
 		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
-        fp->req.num_pending = batchcount;
 	send_read_msg(fp, i, 0);
+	total_sent++;
 
 	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
 
@@ -1996,10 +1995,12 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
             CMCondition_wait(fp_read_data->cm, fp->req.condition);
 	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
 	    fp->req.num_completed = 0;
-	    //fp->req.num_pending = 0;
-	    //total_sent = 0;
-            batchcount = 0;
             fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
+            int amount_left = num_sendees - total_sent;
+            if (amount_left > 0)
+            {
+                fp->req.num_pending = amount_left < FP_BATCH_SIZE ? amount_left : FP_BATCH_SIZE;
+            }
 	}
 
     }
