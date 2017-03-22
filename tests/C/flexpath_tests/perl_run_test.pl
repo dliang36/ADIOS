@@ -47,13 +47,6 @@ foreach (@groups)
         my $writer_prog = "./writer_" . $_;
         my $reader_return;
         my $writer_return;
-        defined(my $reader_pid = fork) or die "Cannot fork $!";
-        unless($reader_pid)
-        {
-            #Child process is here
-            exec ("mpirun -n $num_readers $reader_prog -t flx " . "$reader_output");
-            die "Can't exec reader! $!";
-        }
 
         defined(my $writer_pid = fork) or die "Cannot fork $!";
         unless($writer_pid)
@@ -61,6 +54,18 @@ foreach (@groups)
             #Child process is here
             exec ("mpirun -n $num_writers $writer_prog -t flx " . "$writer_output");
             die "Can't exec writer! $!";
+        }
+
+        # This allows us to sidestep an issue with the filesystem being slow to copy metadata info
+        # after creating a file...this isn't needed with a third party rendevous point
+        sleep 1;
+
+        defined(my $reader_pid = fork) or die "Cannot fork $!";
+        unless($reader_pid)
+        {
+            #Child process is here
+            exec ("mpirun -n $num_readers $reader_prog -t flx " . "$reader_output");
+            die "Can't exec reader! $!";
         }
         
         for($j = 0; $j < 2; $j++)
