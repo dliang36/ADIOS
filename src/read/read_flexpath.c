@@ -231,10 +231,10 @@ void build_bridge(bridge_info* bridge)
 static int *
 get_writer_array(flexpath_reader_file * fp)
 {
-
+    int i;
     fp_verbose(fp, "fp->size: %d\n", fp->size);
     int * the_array = malloc(fp->size * sizeof(int));
-    for(int i = 0; i < fp->size; i++)
+    for(i = 0; i < fp->size; i++)
     {
         if(fp->size < fp->num_bridges)
             the_array[i] = (fp->num_bridges/fp->size) * i;
@@ -243,7 +243,7 @@ get_writer_array(flexpath_reader_file * fp)
     }
     char array_string[500] = {"Finished setting up writer array: "};
     char temp_string[10];
-    for(int i = 0; i < fp->size; i++)
+    for(i = 0; i < fp->size; i++)
     {
 
         char copy_str[500];
@@ -372,6 +372,7 @@ free_displacements(array_displacements *displ, int num)
 static void
 flexpath_var_free(flexpath_var * tmpvars)
 {
+    int i;
     while (tmpvars) {
 
         if(tmpvars->varname) {
@@ -399,7 +400,7 @@ flexpath_var_free(flexpath_var * tmpvars)
 	}
 
 	tmpvars->sel = NULL;
-	for (int i=0; i<tmpvars->num_chunks; i++) {
+	for (i=0; i<tmpvars->num_chunks; i++) {
 	    flexpath_var_chunk *chunk = &tmpvars->chunks[i];
 	    if (chunk->has_data) {
 		free(chunk->data);
@@ -545,7 +546,8 @@ find_fp_var(flexpath_var * var_list, const char * varname)
 static void
 share_global_information(flexpath_reader_file * fp)
 {
-    for (int i = 0; i < fp->current_global_info->num_vars; i++)
+    int i;
+    for (i = 0; i < fp->current_global_info->num_vars; i++)
     {
         global_var *gblvar = &(fp->current_global_info->vars[i]);
         pthread_mutex_lock(&(fp->queue_mutex));
@@ -977,11 +979,12 @@ setup_flexpath_vars(FMField *f, int *num)
 void
 send_finalize_msg(flexpath_reader_file *fp)
 {
+    int i; 
     if((fp->rank / fp->num_bridges) == 0)
     {
         int num_iterations = (fp->num_bridges / fp->size) + 1;
 
-        for(int i = 0; i < num_iterations; i++)
+        for(i = 0; i < num_iterations; i++)
         {
             int send_to = fp->rank + fp->size * i;
             if(send_to >= fp->num_bridges)
@@ -1575,7 +1578,7 @@ redo:
     }
     //printf("Size: %d\n", size);
     
-    char *buffer = malloc(size);
+    char *buffer = calloc(1, size + 1);
     int temp = fread(buffer, size, 1, fp_in);
     fclose(fp_in);
     return buffer;
@@ -1599,6 +1602,7 @@ adios_read_flexpath_open(const char * fname,
 			 enum ADIOS_LOCKMODE lock_mode,
 			 float timeout_sec)
 {
+    int i;
     ADIOS_FILE *adiosfile = malloc(sizeof(ADIOS_FILE));
     if (!adiosfile) {
 	adios_error (err_no_memory,
@@ -1698,7 +1702,7 @@ adios_read_flexpath_open(const char * fname,
         reader_register.reader_file = (uint64_t) fp;
         reader_register.contact_count = fp->size;
         reader_register.contacts = malloc(fp->size * sizeof(char*));
-	for (int i=0; i<fp->size; i++) {
+	for (i=0; i<fp->size; i++) {
             reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
         int * write_array = get_writer_array(fp);
@@ -1728,7 +1732,7 @@ adios_read_flexpath_open(const char * fname,
         this_side_contact_buffer = malloc(fp->num_bridges*CONTACT_LENGTH);
         MPI_Bcast(this_side_contact_buffer, fp->num_bridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
         fp->bridges = malloc(sizeof(bridge_info) * fp->num_bridges);
-        for (int i = 0; i < fp->num_bridges; i++) {
+        for (i = 0; i < fp->num_bridges; i++) {
             int their_stone;
             char in_contact[CONTACT_LENGTH];
             sscanf(&this_side_contact_buffer[i*CONTACT_LENGTH], "%d:%s", &their_stone, in_contact);
