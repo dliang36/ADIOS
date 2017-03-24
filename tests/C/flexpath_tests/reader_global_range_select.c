@@ -91,6 +91,7 @@ int main (int argc, char ** argv)
         }
 
         int sel_index = rank % writer_size;
+	int k;
     
         //printf("\trank=%d: NX=%d\n", rank, NX);
         //printf("\trank=%d: NY=%d\n", rank, NY);
@@ -110,7 +111,7 @@ int main (int argc, char ** argv)
         uint64_t * count_array = malloc(sizeof(uint64_t) * (NY + 1));
         start_array[0] = 0;
         count_array[0] = writer_size;
-        for(int k = 1; k < (NY + 1); ++k)
+        for(k = 1; k < (NY + 1); ++k)
         {
             start_array[k] = 0;
             count_array[k] = NX;
