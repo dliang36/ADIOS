@@ -185,11 +185,12 @@ FlexpathWriteData flexpathWriteData;
 static void
 create_inform_reader_array(FlexpathWriteFileData *fileData)
 {
-    for(int i = 0; i < fileData->total_num_readers; i++)
+    int i;
+    for(i = 0; i < fileData->total_num_readers; i++)
     {
         if(fileData->reader_array[i] == fileData->rank)
         {
-            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, ++(fileData->num_readers_to_inform));
+            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, ++(fileData->num_readers_to_inform) * sizeof(int));
             fileData->readers_to_inform_ranks[fileData->num_readers_to_inform - 1] = i;
 
             fp_verbose(fileData, "Num readers to inform: %d\t\tLast reader: %d\n", fileData->num_readers_to_inform, i);
@@ -863,12 +864,13 @@ set_format(struct adios_group_struct *t,
 
     int fieldNo = 0;
     int altvarcount = 0;
+    int i;
 
     struct adios_attribute_struct *attr;
     for (attr = t->attributes; attr != NULL; attr = attr->next, fieldNo++) {
 	char *fullname = append_path_name(attr->path, attr->name);
 	char *mangle_name = flexpath_mangle(fullname);
-	for (int i = 0; i < fieldNo; i++) {
+	for (i = 0; i < fieldNo; i++) {
 	    if (strcmp(mangle_name, field_list[i].field_name) == 0) {
 		adios_error(err_invalid_group, "set_format:  The Flexpath transport does not allow multiple writes using the same name in a single group, variable %s is disallowed\n", fullname);
 		return NULL;
@@ -899,7 +901,7 @@ set_format(struct adios_group_struct *t,
 	char *fullname = append_path_name(adios_var->path, adios_var->name);
 	char *mangle_name = flexpath_mangle(fullname);
 
-	for (int i = 0; i < fieldNo; i++) {
+	for (i = 0; i < fieldNo; i++) {
 	    if (strcmp(mangle_name, field_list[i].field_name) == 0) {
 		adios_error(err_invalid_group, "set_format:  The Flexpath transport does not allow multiple writes using the same name in a single group, variable %s is disallowed\n", fullname);
 		return NULL;
@@ -1097,6 +1099,7 @@ stone_close_handler(CManager cm, CMConnection conn, int closed_stone, void *clie
 extern void
 reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client_data, attr_list attrs)
 {
+    int i;
     reader_register_msg *msg = (reader_register_msg *)vmsg;
     FlexpathWriteFileData *fileData = (void*)msg->writer_file;
     fileData->numBridges = msg->contact_count;
@@ -1112,7 +1115,7 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     fileData->total_num_readers = msg->contact_count;
     fileData->reader_array = malloc(sizeof(int) * fileData->total_num_readers);
     memcpy(fileData->reader_array, msg->writer_array, sizeof(int) * fileData->total_num_readers);
-    for (int i = 0; i < msg->contact_count; i++) {
+    for (i = 0; i < msg->contact_count; i++) {
         strcpy(&recv_buf[i*CONTACT_LENGTH], msg->contacts[i]);
         //Writer_reader_information, done this way to keep the determining logic in one place (currently on the reader side)
     }
@@ -1169,6 +1172,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 		    struct adios_method_struct *method, 
 		    MPI_Comm comm) 
 {    
+    int i;
     if ( fd == NULL || method == NULL) {
         perr("open: Bad input parameters\n");
         return -1;
@@ -1198,7 +1202,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     char writer_info_filename[200];
     char writer_info_tmp[200];
 
-    int i=0;
+    i=0;
     flexpathWriteData.rank = fileData->rank;
     fileData->globalCount = 0;
 
@@ -1267,7 +1271,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     // build a bridge per line
     int numBridges = fileData->numBridges;
     fileData->bridges = malloc(sizeof(FlexpathStone) * numBridges);
-    for (int i = 0; i < numBridges; i++) {
+    for (i = 0; i < numBridges; i++) {
         char in_contact[CONTACT_LENGTH];
         sscanf(&recv_buff[i*CONTACT_LENGTH], "%d:%s",&stone_num, in_contact);
 	//fprintf(stderr, "reader contact: %d:%s\n", stone_num, in_contact);
@@ -1356,7 +1360,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 	
     //Set each output to the rank + 1 and preserve the 0 output for a sink stone just in case
     //we need it for control one day
-    for (int i = 0; i < numBridges; i++) {
+    for (i = 0; i < numBridges; i++) {
 	fileData->bridges[i].myNum = 
 	    EVcreate_bridge_action(
 		flexpathWriteData.cm, 
@@ -1371,7 +1375,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     }
 
     //Set up split stone
-    for(int i = 0; i < fileData->num_readers_to_inform; ++i)
+    for(i = 0; i < fileData->num_readers_to_inform; ++i)
     {
         fp_verbose(fileData, "Adding split target to inform: %d\n", fileData->readers_to_inform_ranks[i]);
         EVaction_add_split_target(flexpathWriteData.cm, 
