@@ -502,7 +502,7 @@ finalize_msg_handler(CManager cm, void *vevent, void *client_data, attr_list att
     FlexpathWriteFileData * fp = (FlexpathWriteFileData *) client_data;
     CMCondition_signal(flexpathWriteData.cm, fp->final_condition);
 
-    fp_verbose(fp, "Finalize msg handler called and signalled!\n");
+    fp_verbose(fp, "Finalize msg handler called and signalled condition %d!\n", fp->final_condition);
 
 }
 
@@ -1658,13 +1658,13 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
         end_msg.finalize = 1;
         end_msg.close = 1;
         end_msg.final_timestep = fileData->writerStep;
+        fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
         if(fileData->num_readers_to_inform > 0)
 	    EVsubmit_general(fileData->finalizeSource, &end_msg, NULL, fileData->attrs);
 
         /*TODO:Very Bad!!! This means that our finalization is not going to be able to 
                differentiate between streams...but the API doesn't support that yet, so...*/
-        fp_verbose(fileData, "Waiting for the reader to be done!\n");
-        fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
+        fp_verbose(fileData, "Waiting on condition %d for the reader to be done!\n", fileData->final_condition);
         CMCondition_wait(flexpathWriteData.cm, fileData->final_condition);
         fp_verbose(fileData, "Finished Wait for reader cohort to be finished!\n");
 
