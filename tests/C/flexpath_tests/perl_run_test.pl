@@ -58,7 +58,7 @@ foreach (@groups)
 
         # This allows us to sidestep an issue with the filesystem being slow to copy metadata info
         # after creating a file...this isn't needed with a third party rendevous point
-        sleep 1;
+        #sleep 1;
 
         defined(my $reader_pid = fork) or die "Cannot fork $!";
         unless($reader_pid)

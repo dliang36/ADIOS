@@ -56,7 +56,6 @@ typedef struct _reader_register_msg {
     uint64_t reader_file;
     int condition;
     int contact_count;
-    int * writer_array;
     char **contacts;
 } reader_register_msg;
 
@@ -66,7 +65,6 @@ static FMField reader_register_field_list[] =
     {"reader_file", "integer", sizeof(uint64_t), FMOffset(reader_register_msg*, reader_file)},
     {"condition", "integer", sizeof(int), FMOffset(reader_register_msg*, condition)},
     {"contact_count", "integer", sizeof(int), FMOffset(reader_register_msg*, contact_count)},
-    {"writer_array", "integer[contact_count]", sizeof(int), FMOffset(reader_register_msg*, writer_array)},
     {"contacts", "string[contact_count]", sizeof(char*), FMOffset(reader_register_msg*, contacts)},
     {NULL, NULL, 0, 0}
 };

@@ -124,7 +124,6 @@ typedef struct _flexpath_write_file_data {
     int * readers_to_inform_ranks;
     //We need to hold the full list somewhere, but this can be freed
     int total_num_readers;
-    int * reader_array;
     EVstone multiStone;
     EVstone splitStone;
     EVstone sinkStone;
@@ -185,14 +184,18 @@ FlexpathWriteData flexpathWriteData;
 static void
 create_inform_reader_array(FlexpathWriteFileData *fileData)
 {
+    int reader_size = fileData->total_num_readers;
+    int writer_size = fileData->size;
     int i;
-    for(i = 0; i < fileData->total_num_readers; i++)
-    {
-        if(fileData->reader_array[i] == fileData->rank)
-        {
-            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, ++(fileData->num_readers_to_inform) * sizeof(int));
-            fileData->readers_to_inform_ranks[fileData->num_readers_to_inform - 1] = i;
 
+    for(i = 0; i < reader_size; i++)
+    {
+        if((i % writer_size) == fileData->rank)
+        {
+            fileData->readers_to_inform_ranks = realloc(fileData->readers_to_inform_ranks, 
+                                                        ++(fileData->num_readers_to_inform) * sizeof(int));
+
+            fileData->readers_to_inform_ranks[fileData->num_readers_to_inform - 1] = i;
             fp_verbose(fileData, "Num readers to inform: %d\t\tLast reader: %d\n", fileData->num_readers_to_inform, i);
         }
     }
@@ -1111,10 +1114,7 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     recv_buf = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
     fp_verbose(fileData, "Reader Register handler called!\n");
     int total_num_readers;
-    int * reader_array;
     fileData->total_num_readers = msg->contact_count;
-    fileData->reader_array = malloc(sizeof(int) * fileData->total_num_readers);
-    memcpy(fileData->reader_array, msg->writer_array, sizeof(int) * fileData->total_num_readers);
     for (i = 0; i < msg->contact_count; i++) {
         strcpy(&recv_buf[i*CONTACT_LENGTH], msg->contacts[i]);
         //Writer_reader_information, done this way to keep the determining logic in one place (currently on the reader side)
@@ -1250,22 +1250,19 @@ adios_flexpath_open(struct adios_file_struct *fd,
         MPI_Bcast(&fileData->numBridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(&fileData->total_num_readers, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(recv_buff, fileData->numBridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
-        MPI_Bcast(fileData->reader_array, fileData->total_num_readers, MPI_INT, 0, MPI_COMM_WORLD);
 
-        create_inform_reader_array(fileData);
 
 
         unlink(writer_info_filename);
     } else {
         MPI_Bcast(&fileData->numBridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(&fileData->total_num_readers, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        fileData->reader_array = malloc(fileData->total_num_readers * sizeof(int));
         recv_buff = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
         MPI_Bcast(recv_buff, fileData->numBridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
-        MPI_Bcast(fileData->reader_array, fileData->total_num_readers, MPI_INT, 0, MPI_COMM_WORLD);
-        create_inform_reader_array(fileData);
         /*Could get rid of the old array here, but maybe not*/
     }
+    
+    create_inform_reader_array(fileData);
 
     int stone_num;
     // build a bridge per line
@@ -1386,6 +1383,9 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     FMContext my_context = create_local_FMcontext();
     fileData->fm->ioFormat = register_data_format(my_context, fileData->fm->format);
+
+    //Set this up here so that the reader can close without waiting for the end of the stream
+    fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
     
     if (fileData->rank == 0) {
         reader_go_msg go_msg;
@@ -1658,7 +1658,6 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
         end_msg.finalize = 1;
         end_msg.close = 1;
         end_msg.final_timestep = fileData->writerStep;
-        fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
         if(fileData->num_readers_to_inform > 0)
 	    EVsubmit_general(fileData->finalizeSource, &end_msg, NULL, fileData->attrs);
 

@@ -224,44 +224,6 @@ void build_bridge(bridge_info* bridge)
     }
 }
 
-/* This function returns an array of size = num_readers
-   that dictates which writer each reader wants to receive
-   information from
-*/
-static int *
-get_writer_array(flexpath_reader_file * fp)
-{
-    int i;
-    fp_verbose(fp, "fp->size: %d\n", fp->size);
-    int * the_array = malloc(fp->size * sizeof(int));
-    for(i = 0; i < fp->size; i++)
-    {
-        if(fp->size < fp->num_bridges)
-            the_array[i] = (fp->num_bridges/fp->size) * i;
-        else
-            the_array[i] = i % fp->num_bridges;
-    }
-    char array_string[500] = {"Finished setting up writer array: "};
-    char temp_string[10];
-    for(i = 0; i < fp->size; i++)
-    {
-
-        char copy_str[500];
-        strcpy(copy_str, array_string);
-        sprintf(array_string, "%s %d", copy_str, the_array[i]);
-    }
-
-    fp_verbose(fp, "%s\n", array_string);
-
-    //Do normal reading setup, here.  I wanted to do everything in one place
-    //to reduce errors if we have to change things later on.
-    fp->writer_coordinator = the_array[fp->rank];
-    build_bridge(&fp->bridges[fp->writer_coordinator]);
-
-    fp_verbose(fp, "Finished setting up our writer_coordinator and building the appropriate bridge\n");
-
-    return the_array;
-}
 
 
 static timestep_seperated_var_list *
@@ -1705,15 +1667,12 @@ adios_read_flexpath_open(const char * fname,
 	for (i=0; i<fp->size; i++) {
             reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
-        int * write_array = get_writer_array(fp);
-        reader_register.writer_array = write_array;
 
         CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
         attr_list writer_rank0_contact = attr_list_from_string(fp->bridges[0].contact);
         CMConnection conn = CMget_conn (fp_read_data->cm, writer_rank0_contact);
         CMwrite(conn, format, &reader_register);
 	free(recvbuf);
-        free(write_array);
         fp->req.condition = CMCondition_get(fp_read_data->cm, conn);
         /*  loosing connection here.  Close it later */
 
@@ -1743,12 +1702,6 @@ adios_read_flexpath_open(const char * fname,
             fp->bridges[i].opened = 0;
             fp->bridges[i].scheduled = 0;
         }
-        fp_verbose(fp, "About to get writer_array after creating the bridges!\n");
-        //We need the array for rank 0, but not here. I'm trying really hard to 
-        //have the logic determing the reader_writer coordination logic in a single
-        //place so we don't have issues when/if we change it later
-        int * temp_write = get_writer_array(fp);
-        free(temp_write);
         MPI_Barrier(MPI_COMM_WORLD);
         fp_verbose(fp, "Past the MPI_Barrier on the non-root side\n");
     }
