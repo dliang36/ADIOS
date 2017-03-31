@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 #include "mpi.h"
 #include "adios.h"
 #include "public/adios_read.h"
@@ -147,11 +148,11 @@ int main (int argc, char ** argv)
 	    }
 	}
         */
+        sleep(10);
         adios_release_step(afile);
         adios_advance_step(afile, 0, 30);
         ii++;
         //MPI_Barrier (comm);
-        //sleep(1);
     }
     //
 just_clean:

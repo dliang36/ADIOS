@@ -1661,6 +1661,8 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
         if(fileData->num_readers_to_inform > 0)
 	    EVsubmit_general(fileData->finalizeSource, &end_msg, NULL, fileData->attrs);
 
+        fp_verbose(fileData, "Num_readers_to_inform: %d\n", fileData->num_readers_to_inform);
+
         /*TODO:Very Bad!!! This means that our finalization is not going to be able to 
                differentiate between streams...but the API doesn't support that yet, so...*/
         fp_verbose(fileData, "Waiting on condition %d for the reader to be done!\n", fileData->final_condition);
