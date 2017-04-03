@@ -40,6 +40,8 @@ EO
 	-nw <count> & number of nodes to run write side
 	-nr <count> & number of nodes to run read side
 	-q & be quiet
+        -f & turn on flexpath_verbose
+        -m & turn off the timeout
         -v & be verbose
         -vr & verbose reader
         -vw & verbose writer
