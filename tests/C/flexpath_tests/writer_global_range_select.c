@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include "mpi.h"
 #include "adios.h"
 
@@ -66,6 +67,7 @@ int main (int argc, char ** argv)
     
       adios_close (adios_handle);
       fprintf(stderr, "Rank=%d commited write %d\n", rank, group_num);
+      sleep(11);
     }
     adios_finalize (rank);
 

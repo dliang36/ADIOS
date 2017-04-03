@@ -43,64 +43,61 @@ foreach (@groups)
         my $num_readers = $num_procs[$i * 2];
         my $num_writers = $num_procs[$i * 2 + 1];
 
-        my $reader_prog = "./reader_" . $_;
-        my $writer_prog = "./writer_" . $_;
+        my $reader_prog = "reader_" . $_;
+        my $writer_prog = "writer_" . $_;
         my $reader_return;
         my $writer_return;
 
-        defined(my $writer_pid = fork) or die "Cannot fork $!";
-        unless($writer_pid)
+        defined(my $test_pid = fork) or die "Cannot fork $!";
+        unless($test_pid)
         {
             #Child process is here
-            exec ("mpirun -n $num_writers $writer_prog -t flx " . "$writer_output");
-            die "Can't exec writer! $!";
+            exec ("../run_test -nw $num_writers -nr $num_readers -w $writer_prog -r $reader_prog 2>&1 1>/dev/null"); #.  "$writer_output");
+            die "Can't exec run_test! $!";
         }
 
         # This allows us to sidestep an issue with the filesystem being slow to copy metadata info
         # after creating a file...this isn't needed with a third party rendevous point
         #sleep 1;
 
-        defined(my $reader_pid = fork) or die "Cannot fork $!";
-        unless($reader_pid)
-        {
-            #Child process is here
-            exec ("mpirun -n $num_readers $reader_prog -t flx " . "$reader_output");
-            die "Can't exec reader! $!";
-        }
+        #defined(my $reader_pid = fork) or die "Cannot fork $!";
+        #unless($reader_pid)
+        #{
+        #    #Child process is here
+        #    exec ("mpirun -n $num_readers $reader_prog -t flx " . "$reader_output");
+        #    die "Can't exec reader! $!";
+        #}
         
-        for($j = 0; $j < 2; $j++)
+        #for($j = 0; $j < 2; $j++)
+        #{
+        my $return_test = wait;
+        #print "Returned PID: $returned_pid\n";
+        
+        if($return_test == $test_pid)
         {
-            my $returned_pid = wait;
-            #print "Returned PID: $returned_pid\n";
-            
-            if($returned_pid == $reader_pid)
-            {
-                $reader_return = $? >> 8;
-                kill 9, $writer_pid if $reader_return == 139;
-                #print "Reader returned: $reader_return\n";
-            }
-            elsif($returned_pid == $writer_pid)
-            {
-                $writer_return = $? >> 8;
-                kill 9, $reader_pid if $writer_return == 139;
-                #print "Writer returned: $writer_return\n";
-            }
-            else
-            {
-                print "Weird return PID: $returned_pid\n";
-            }
+            $return_test = $? >> 8;
+            #kill 9, $writer_pid if $reader_return == 139;
+            #print "Reader returned: $reader_return\n";
         }
+        #elsif($returned_pid == $writer_pid)
+        #{
+        #    $writer_return = $? >> 8;
+        #    kill 9, $reader_pid if $writer_return == 139;
+        #    #print "Writer returned: $writer_return\n";
+        #}
+        else
+        {
+            print "Weird return PID: $return_test\n";
+        }
+        #}
 
-        if($reader_return == 0 and $writer_return == 0)
+        if($return_test == 0)
         {
             print "$_ with $num_readers readers and $num_writers writers: PASSED!\n";
         }
         else
         {
-            print "$_ with $num_readers readers and $num_writers writers: FAILED!\t";
-            print "Reader failed with code: $reader_return\t" if $reader_return;
-            print "Writer failed with code: $writer_return\t" if $writer_return;
-            print "\n";
+            print "$_ with $num_readers readers and $num_writers writers: FAILED!\n";
         }
     }
 }
