@@ -59,6 +59,18 @@ int main(int argc, char ** argv){
 		return DIAG_ERR;
 	}
 
+        if(rank == 0)
+        {
+            printf("Writer side array: ");
+            int j;
+            for(j = 0; j < NX; j++)
+            {
+                printf("%f ", t[j]);
+            }
+            printf("\n");
+        }
+
+
 	uint64_t adios_groupsize, adios_totalsize;
 
 	// open with the group name as specified in the xml file

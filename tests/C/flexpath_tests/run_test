@@ -10,6 +10,7 @@ nw="2"
 debugger="gdb"
 verbose_reader='1>/dev/null'
 verbose_writer='1>/dev/null'
+no_timeout=0;
 
 # 3 is the file descriptor for the reader 
 exec 3<> /dev/null
@@ -48,7 +49,7 @@ EO
 } 
 
 PROGNAME=${0##*/} 
-SHORTOPTS="r:w:n:t:o:qhv" 
+SHORTOPTS="r:w:n:t:o:qhvfm" 
 LONGOPTS="nw:,nr:,vr,vw,help,timeout:,debug_reader,debug_writer,valgrind_reader,valgrind_writer" 
 
 ARGS=$(getopt -a -s bash --options $SHORTOPTS  \
@@ -67,9 +68,11 @@ do
     (-r) reader_prog="$2"; shift;;
     (-w) writer_prog="$2"; shift;;
     (-n) nw="$2"; nr="$2"; shift;;
-    (-v) export FLEXPATH_VERBOSE=1; exec 3>&1; exec 4>&1;;
-    (--vr) export FLEXPATH_VERBOSE=1; exec 3>&1;;
-    (--vw) export FLEXPATH_VERBOSE=1; exec 4>&1;;
+    (-f) export FLEXPATH_VERBOSE=1;;
+    (-v) exec 3>&1; exec 4>&1;;
+    (-m) no_timeout=1;;
+    (--vr) exec 3>&1;;
+    (--vw) exec 4>&1;;
     (--nw) nw="$2"; shift;;
     (--nr) nr="$2"; shift;;
     (-t) transport="$2"; shift;;
@@ -97,11 +100,11 @@ rm -f *writer_info.txt *writer_ready.txt *reader_info.txt *reader_ready.txt
 # Spawn the writer
 if [ "$writer_mode" = "debug" ]; then
     if [ "$debugger" = "lldb" ]; then
-	echo "	(mpirun -n $wr xterm -e lldb ./$writer_prog -- -t $transport 2>&1 1>&4 ) & writer_pid=$!"
-	(mpirun -n $nw xterm -e lldb ./$writer_prog -- -t $transport 2>&1 1>&4 ) & writer_pid=$!
+	echo "	(mpirun -n $wr xterm -e lldb ./$writer_prog -- -t $transport 1>&4 2>&1) & writer_pid=$!"
+	(mpirun -n $nw xterm -e lldb ./$writer_prog -- -t $transport 1>&4 2>&1) & writer_pid=$!
     elif [ "$debugger" = "gdb" ]; then
-	echo "(mpirun -n $nw xterm -e gdb -args ./$writer_prog -t $transport 2>&1 1>&4 ) & writer_pid=$!"
-	(mpirun -n $wr xterm -e gdb -args ./$writer_prog -t $transport 2>&1 1>&4 ) & writer_pid=$!
+	echo "(mpirun -n $nw xterm -e gdb -args ./$writer_prog -t $transport 1>&4 2>&1) & writer_pid=$!"
+	(mpirun -n $wr xterm -e gdb -args ./$writer_prog -t $transport 1>&4 2>&1) & writer_pid=$!
     else 
 	echo "Unknown debugger \"$debugger\"";
     fi
@@ -109,8 +112,8 @@ elif [ "$writer_mode" = "valgrind" ]; then
     echo "Doing     (mpirun -n $nw xterm -hold -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!"
     (mpirun -n $nw xterm -hold -sl 10000 -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!
 else
-    echo "Doing        (mpirun -n $nw ./$writer_prog -t $transport 2>&1 1>&4 ) & writer_pid=$!"
-    (mpirun -n $nw ./$writer_prog -t $transport 2>&1 1>&4 ) & writer_pid=$!
+    echo "Doing        (mpirun -n $nw ./$writer_prog -t $transport 1>&4 2>&1) & writer_pid=$!"
+    (mpirun -n $nw ./$writer_prog -t $transport 1>&4 2>&1 ) & writer_pid=$!
 fi
 
 
@@ -119,21 +122,26 @@ sleep 2
 # Spawn the reader
 if [ "$reader_mode" = "debug" ]; then
     if [ "$debugger" = "lldb" ]; then
-	(mpirun -n $nr xterm -e lldb ./$reader_prog -- -t $transport 2>&1 1>&3 ) & reader_pid=$!
+	(mpirun -n $nr xterm -e lldb ./$reader_prog -- -t $transport 1>&3 2>&1) & reader_pid=$!
     elif [ "$debugger" = "gdb" ]; then
-	(mpirun -n $nr xterm -e gdb -args ./$reader_prog -t $transport 2>&1 1>&3 ) & reader_pid=$!
+	(mpirun -n $nr xterm -e gdb -args ./$reader_prog -t $transport 1>&3 2>&1) & reader_pid=$!
     else 
 	echo "Unknown debugger \"$debugger\"";
     fi
 elif [ "$reader_mode" = "valgrind" ]; then 
     (mpirun -n $nr xterm -hold -sl 10000 -e valgrind --tool=memcheck ./$reader_prog -t $transport ) & reader_pid=$!
 else
-    (mpirun -n $nr ./$reader_prog -t $transport 2>&1 1>&3 ) & reader_pid=$!
+    (mpirun -n $nr ./$reader_prog -t $transport 1>&3 2>&1) & reader_pid=$!
 fi
 
 # in the background, sleep for timeout secs then kill that processes
-echo "Sleeping for $timeout"
-(sleep $timeout && kill -9 $reader_pid && kill -9 $writer_pid 2>/dev/null) & waiter=$!
+if [ $no_timeout -eq 0 ]
+then
+    echo "Sleeping for $timeout"
+    (sleep $timeout && kill -9 $reader_pid && kill -9 $writer_pid 2>/dev/null) & waiter=$!
+else
+    echo "No timeout...moving on."
+fi
 
 # wait on our worker process and return the exitcode
 wait $reader_pid
@@ -144,12 +152,16 @@ wait $writer_pid
 writer_exitcode=$?
 
 # kill the waiter subshell, if it still runs
-kill -9 $waiter 2>/dev/null
-# 0 if we killed the waiter, cause that means the process finished before the waiter
-finished_gracefully=$?
+finished_gracefully=0
+if [ $no_timeout -eq 0 ]
+then
+    kill -9 $waiter 2>/dev/null
+    # 0 if we killed the waiter, cause that means the process finished before the waiter
+    finished_gracefully=$?
+    # wait for waiter so that we don't get a killed message
+    wait $waiter 2>/dev/null
+fi
 
-# wait for waiter so that we don't get a killed message
-wait $waiter 2>/dev/null
 
 exit_value=0
 if [ "$writer_exitcode" -ne "0" ]; then

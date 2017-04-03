@@ -852,25 +852,37 @@ need_writer(
     //for each dimension
     int i=0;
     offset_struct var_offsets = gvar->offsets[0];
+    //if(fp->rank == 0)
+    //    printf("Offsets array data********************\n");
+
     for (i=0; i< var_offsets.offsets_per_rank; i++) {
 	int pos = writer*(var_offsets.offsets_per_rank) + i;
+        //if(fp->rank == 0)
+        //    printf("Global pos: %d\n", pos);
 
         uint64_t sel_offset = sel->u.bb.start[i];
+        //if(fp->rank == 0)
+        //    printf("Select offset: %ld\n", sel_offset);
         uint64_t sel_size = sel->u.bb.count[i];
+        //if(fp->rank == 0)
+        //    printf("Select size: %ld\n", sel_size);
 
         uint64_t rank_offset = var_offsets.local_offsets[pos];
+        //if(fp->rank == 0)
+        //    printf("rank_offset: %ld\n", rank_offset);
         uint64_t rank_size = var_offsets.local_dimensions[pos];
+        //if(fp->rank == 0)
+        //    printf("rank_size: %ld\n\n", rank_size);
 
 	/* fprintf(stderr, "need writer rank: %d writer: %d sel_start: %d sel_count: %d rank_offset: %d rank_size: %d\n",
            fp->rank, writer, (int)sel_offset, (int)sel_size, (int)rank_offset, (int)rank_size); */
 
         if ((rank_size == 0) || (sel_size == 0)) return 0;
 
-        if (!((rank_offset <= sel_offset+sel_size) && (sel_offset <= rank_offset+rank_size))) {
-            /* fprintf(stderr, "Didn't overlap\n"); */
+        if ((rank_offset < sel_offset && (rank_offset + rank_size) < sel_offset) || (rank_offset >= sel_offset + sel_size))
+        {
             return 0;
         }
-
     }
     return 1;
 }
@@ -1094,6 +1106,38 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     }
 
     curr->metadata = msg;
+    //Made for debugging purposes, not needed but worked too hard to remove
+    /*if(fp->rank == 0)
+    {
+        printf("Group message_info****************\n");
+        printf("Condition: %d\n", msg->condition);
+        printf("Num_vars: %d\n", msg->num_vars);
+        printf("Step: %d\n", msg->step);
+        printf("Process_id: %d\n", msg->process_id);
+        printf("Group_name: %s\n", msg->group_name);
+        int i;
+        for(i = 0; i < msg->num_vars; i++)
+        {
+            printf("\t\tVariable_name: %s\n", msg->vars->name);
+            printf("\t\tNumber offset_structs: %d\n", msg->vars->noffset_structs);
+            int j;
+            for(j = 0; j < msg->vars->noffset_structs; j++)
+            {
+                printf("\t\t\t\tOffsets_per_rank: %d\n", msg->vars->offsets->offsets_per_rank);
+                printf("\t\t\t\tTotal_offsets: %d\n", msg->vars->offsets->total_offsets);
+                printf("\t\t\t\tLocal_dimensions: ");
+                int k;
+                for(k = 0; k < msg->vars->offsets->total_offsets; k++)
+                    printf("%ld ", msg->vars->offsets->local_dimensions[k]);
+
+                printf("\n\t\t\t\tLocal_offsets: ");
+                for(k = 0; k < msg->vars->offsets->total_offsets; k++)
+                    printf("%ld ", msg->vars->offsets->local_offsets[k]);
+                printf("\n");
+            }
+        }
+    }
+    */
     pthread_mutex_unlock(&(fp->queue_mutex));
     return 0;
 }
@@ -2028,7 +2072,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
     flexpath_var *fpvar = curr_var_list->var_list;
     pthread_mutex_unlock(&(fp->queue_mutex));
 
-    fp_verbose(fp, "entering schedule_read_byid, varid %d\n", varid);
+    //fp_verbose(fp, "entering schedule_read_byid, varid %d\n", varid);
     while (fpvar) {
         if (fpvar->id == varid)
         	break;
@@ -2082,6 +2126,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
 			"No process exists on the writer side matching the index.\n");
 	    return err_out_of_bound;
 	}
+        fp_verbose(fp, "Adding var to read message for ADIOS_SELECTION_WRITEBLOCK for writer_index: %d\n", writer_index);
 	add_var_to_read_message(fp, writer_index, fpvar->varname);
 	break;
     }
@@ -2091,6 +2136,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
         if (fpvar->ndims == 0) {
 	    if (chunk->has_data) {
 		memcpy(data, chunk->data, fpvar->type_size);
+                fp_verbose(fp, "Grabbing scalar data immediately, no need for message!\n");
 	    } else {
 		printf("Trying to schedule read on scalar %s, no data fpvar %p, chunk %p\n", fpvar->varname, fpvar, chunk);
 	    }
@@ -2124,6 +2170,7 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
 
                     all_disp = realloc(all_disp, sizeof(array_displacements)*need_count);
                     all_disp[need_count-1] = *displ;
+                    fp_verbose(fp, "Adding var to read message for ADIOS_SELECTION_BOUNDINGBOX for writer: %d\n", j);
                     add_var_to_read_message(fp, j, fpvar->varname);
                 }
             }
@@ -2218,7 +2265,7 @@ adios_read_flexpath_inq_var(const ADIOS_FILE * adiosfile, const char* varname)
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
     ADIOS_VARINFO *v = NULL;
 
-    fp_verbose(fp, "entering flexpath_inq_var\n");
+    fp_verbose(fp, "entering flexpath_inq_var, varname: %s\n", varname);
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
     flexpath_var *fpvar = find_fp_var(ts_var_list->var_list, varname);
@@ -2245,10 +2292,10 @@ ADIOS_VARINFO*
 adios_read_flexpath_inq_var_byid (const ADIOS_FILE * adiosfile, int varid)
 {
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
-    fp_verbose(fp, "entering flexpath_inq_var_byid\n");
+    //fp_verbose(fp, "entering flexpath_inq_var_byid, varid: %d\n", varid);
     if (varid >= 0 && varid < adiosfile->nvars) {
 	ADIOS_VARINFO *v = adios_read_flexpath_inq_var(adiosfile, adiosfile->var_namelist[varid]);
-	fp_verbose(fp, "leaving flexpath_inq_var_byid\n");
+	//fp_verbose(fp, "leaving flexpath_inq_var_byid\n");
 	return v;
     }
     else {

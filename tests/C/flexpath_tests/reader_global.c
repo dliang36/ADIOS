@@ -134,13 +134,21 @@ int main (int argc, char **argv){
 
 	// compare the values what you get with what you expect
 	int i = 0;
+        if(rank == 0)
+        {
+            printf("Reader received array: ");
+        }
 	for (i = 0; i < NX; ++i) {
+                if(rank == 0)
+                    printf("%f ", t[i]);
 		if (t[i] != t_ref[i]) {
 			p_test_failed(test_result.name, rank);
 			test_result.result = TEST_FAILED;
 			break;
 		}
 	}
+        if(rank == 0)
+            printf("\n");
 
 	if (TEST_PASSED == test_result.result)
 		p_test_passed(test_result.name, rank);
