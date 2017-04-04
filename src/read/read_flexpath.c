@@ -852,34 +852,34 @@ need_writer(
     //for each dimension
     int i=0;
     offset_struct var_offsets = gvar->offsets[0];
-    //if(fp->rank == 0)
-    //    printf("Offsets array data********************\n");
+    if(fp->rank == 1)
+        printf("Offsets array data********************\n");
 
     for (i=0; i< var_offsets.offsets_per_rank; i++) {
 	int pos = writer*(var_offsets.offsets_per_rank) + i;
-        //if(fp->rank == 0)
-        //    printf("Global pos: %d\n", pos);
+        if(fp->rank == 1)
+            printf("Global pos: %d\n", pos);
 
         uint64_t sel_offset = sel->u.bb.start[i];
-        //if(fp->rank == 0)
-        //    printf("Select offset: %ld\n", sel_offset);
+        if(fp->rank == 1)
+            printf("Select offset: %ld\n", sel_offset);
         uint64_t sel_size = sel->u.bb.count[i];
-        //if(fp->rank == 0)
-        //    printf("Select size: %ld\n", sel_size);
+        if(fp->rank == 1)
+            printf("Select size: %ld\n", sel_size);
 
         uint64_t rank_offset = var_offsets.local_offsets[pos];
-        //if(fp->rank == 0)
-        //    printf("rank_offset: %ld\n", rank_offset);
+        if(fp->rank == 1)
+            printf("rank_offset: %ld\n", rank_offset);
         uint64_t rank_size = var_offsets.local_dimensions[pos];
-        //if(fp->rank == 0)
-        //    printf("rank_size: %ld\n\n", rank_size);
+        if(fp->rank == 1)
+            printf("rank_size: %ld\n\n", rank_size);
 
 	/* fprintf(stderr, "need writer rank: %d writer: %d sel_start: %d sel_count: %d rank_offset: %d rank_size: %d\n",
            fp->rank, writer, (int)sel_offset, (int)sel_size, (int)rank_offset, (int)rank_size); */
 
         if ((rank_size == 0) || (sel_size == 0)) return 0;
 
-        if ((rank_offset < sel_offset && (rank_offset + rank_size) < sel_offset) || (rank_offset >= sel_offset + sel_size))
+        if ((rank_offset < sel_offset && (rank_offset + rank_size) <= sel_offset) || (rank_offset >= sel_offset + sel_size))
         {
             return 0;
         }
@@ -1107,7 +1107,7 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
 
     curr->metadata = msg;
     //Made for debugging purposes, not needed but worked too hard to remove
-    /*if(fp->rank == 0)
+    if(fp->rank == 1)
     {
         printf("Group message_info****************\n");
         printf("Condition: %d\n", msg->condition);
@@ -1137,7 +1137,7 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
             }
         }
     }
-    */
+    
     pthread_mutex_unlock(&(fp->queue_mutex));
     return 0;
 }
