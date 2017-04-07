@@ -3,6 +3,7 @@
 
 
 #include "core/adios_logger.h"
+#include "/net/hu21/dliang36/SP/sos_flow/src/sos.h"
 
 #define CONTACT_LENGTH 1024
 
@@ -228,6 +229,5 @@ static FMStructDescRec data_format_list[] =
 
 
 static char *getFixedName(char *name);
-
 
 #endif

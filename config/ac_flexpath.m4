@@ -91,6 +91,9 @@ if test "x$ac_flexpath_ok" != "xno"; then
 
 fi
 
+FP_LDFLAGS="$FP_LDFLAGS -L/users/c/chaos/mona/lib"
+FP_LIBS="$FP_LIBS -lsos"
+FP_CPPFLAGS="$FP_CPPFLAGS -I/users/c/chaos/mona/include"
 AC_SUBST(FP_LIBS)
 AC_SUBST(FP_CPPFLAGS)
 AC_SUBST(FP_LDFLAGS)

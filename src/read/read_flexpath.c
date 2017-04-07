@@ -59,6 +59,9 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+SOS_runtime *my_sos;
+SOS_pub *pub;
+
 //This is a linked list for the linked list of fp_vars
 //This is necessary to support push based gloabl metadata updates
 
@@ -1089,6 +1092,11 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
         fp->group_name = strdup(msg->group_name);
     }
     
+	int grp = 555;
+	char name[22]; 
+        snprintf(name, sizeof(name), "grp msg rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &grp);
+	SOS_publish(pub);
     pthread_mutex_lock(&(fp->queue_mutex));
     global_metadata_ptr curr = fp->global_info;
     while(curr && curr->next)
@@ -1139,6 +1147,10 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     }
     */
     pthread_mutex_unlock(&(fp->queue_mutex));
+
+        snprintf(name, sizeof(name), "grp msg unl %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &grp);
+	SOS_publish(pub);
     return 0;
 }
 
@@ -1303,13 +1315,22 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
         fp_verbose(fp, "Setting up initial vars!\n");
 	int var_count = 0;
 
+	int rawH = 888;
+	char name[22]; 
+        snprintf(name, sizeof(name), "rawH rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	SOS_publish(pub);
         pthread_mutex_lock(&(fp->queue_mutex));
         create_flexpath_var_for_timestep(fp, timestep);
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
 	ts_var_list->var_list = setup_flexpath_vars(f, &var_count);
         pthread_mutex_unlock(&(fp->queue_mutex));
 
+        snprintf(name, sizeof(name), "rawH unl %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	SOS_publish(pub);
 	adiosfile->var_namelist = malloc(var_count * sizeof(char *));
+	
 	int i = 0;
 	while (f->field_name != NULL) {
 	    char *unmangle = flexpath_unmangle(f->field_name);
@@ -1332,6 +1353,11 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	char *unmangle = flexpath_unmangle(f->field_name);
 	char *dims[100]; /* more than we should ever need */
 
+	int rawH = 22;
+	char name[22]; 
+        snprintf(name, sizeof(name), "rawH fld %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	SOS_publish(pub);
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
         if(ts_var_list == NULL)
@@ -1343,6 +1369,9 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	flexpath_var * var = find_fp_var(ts_var_list->var_list, unmangle);
         pthread_mutex_unlock(&(fp->queue_mutex));
 
+        snprintf(name, sizeof(name), "fld ulk %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	SOS_publish(pub);
     	if (!var) {
     	    adios_error(err_file_open_error,
     			"file not opened correctly.  var does not match format.\n");
@@ -1480,11 +1509,21 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     else
     {
         fp_verbose(fp, "Only scalars message received for:%d\n", timestep);
+
+	int rawH = 999;
+	char name[22]; 
+        snprintf(name, sizeof(name), "onlyScl %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	SOS_publish(pub);
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
         ts_var_list->is_list_filled = 1;
         pthread_cond_signal(&(fp->queue_condition));
         pthread_mutex_unlock(&(fp->queue_mutex));
+        
+	snprintf(name, sizeof(name), "onlyScl ulk %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	SOS_publish(pub);
     }
 
     free_fmstructdesclist(struct_list);
@@ -1549,6 +1588,28 @@ adios_read_flexpath_init_method (MPI_Comm comm, PairStruct* params)
     }
     CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader go", reader_go_field_list, sizeof(reader_go_msg));
     CMregister_handler(format, reader_go_handler, NULL);
+
+    int argc = 9;
+    char *argv[] = {"reader", "-i", "1", "-m", "1", "-p", "1", "-d", "0"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT -p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
+    char** myarg = argv;
+
+    my_sos = SOS_init( &argc, &myarg, SOS_ROLE_CLIENT, SOS_LAYER_APP);
+    SOS_SET_CONTEXT(my_sos, "flexpath");
+    srandom(my_sos->my_guid);
+
+    pub = SOS_pub_create(my_sos, "demo", SOS_NATURE_CREATE_OUTPUT);
+    strcpy (pub->prog_ver, "1.0");
+    pub->meta.channel     = 1;
+    pub->meta.nature      = SOS_NATURE_EXEC_WORK;
+    pub->meta.layer       = SOS_LAYER_APP;
+    pub->meta.pri_hint    = SOS_PRI_DEFAULT;
+    pub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
+    pub->meta.retain_hint = SOS_RETAIN_DEFAULT;
+    
+    
+	char name[22]; 
+        snprintf(name, sizeof(name), "inited");
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &argc);
     return 0;
 }
 
@@ -1819,21 +1880,30 @@ int adios_read_flexpath_finalize_method ()
     /* 	    send_finalize_msg(fp, i); */
     /*     } */
     /* } */
+    SOS_finalize(my_sos);
     return 1;
 }
 
 
 //A lot of the complexity of the underlying linked lists is hidden in the functions
 void adios_read_flexpath_release_step(ADIOS_FILE *adiosfile) {
-    int i;
+    int i = 666;
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
     //fp_verbose(fp, "waiting at flexpath_release step barrier\n");
     //MPI_Barrier(fp->comm);
     //fp_verbose(fp, "done with flexpath_release step barrier\n");
 
+	char name[22]; 
+        snprintf(name, sizeof(name), "rls in rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &i);
+	SOS_publish(pub);
     pthread_mutex_lock(&(fp->queue_mutex));
     remove_relevant_global_data(fp, fp->mystep);
     pthread_mutex_unlock(&(fp->queue_mutex));
+
+        snprintf(name, sizeof(name), "rls unlck rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &i);
+	SOS_publish(pub);
     fp->current_global_info = NULL;
 
     pthread_mutex_lock(&(fp->queue_mutex));
@@ -1848,6 +1918,10 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     MPI_Barrier(fp->comm);
     int count = 0;
 
+	char name[22]; 
+        snprintf(name, sizeof(name), "adv in rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &last);
+	SOS_publish(pub);
     //Check to see if we have the next steps global metadata
     pthread_mutex_lock(&(fp->queue_mutex));
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, ++fp->mystep);
@@ -1857,9 +1931,14 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
         ts_var_list = find_var_list(fp, fp->mystep);
     }
 
+int num = 518;
     //If we don't have the scalar data or if we haven't received a finalized message, wait
     while(ts_var_list->is_list_filled == 0 && (fp->last_writer_step != fp->mystep)) 
     {
+	snprintf(name, sizeof(name), "adv condW %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &num);
+        SOS_publish(pub);
+
         fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", fp->mystep);
         pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
         fp_verbose(fp, "Received signal! Last_writer_step:%d\t\tMystep:%d\n", fp->last_writer_step, fp->mystep);
@@ -1867,6 +1946,9 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     pthread_mutex_unlock(&(fp->queue_mutex));
     fp_verbose(fp, "Finished wait on global data for timestep: %d\n", fp->mystep);
 
+        snprintf(name, sizeof(name), "adv unlck rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &num);
+	SOS_publish(pub);
     //If finalized, err_end_of_stream
     if(fp->last_writer_step == fp->mystep)
     {
@@ -1987,13 +2069,26 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     for (i = 0; i<num_sendees; i++) {
 		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
 		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
+	/*char name[22];
+        snprintf(name, sizeof(name), "send from rank %d", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->sendees[i]);*/
+
 	send_read_msg(fp, i, 0);
 	total_sent++;
 
 	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
 
 	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
+
+	    /*snprintf(name, sizeof(name), "wait on CMCond %d", fp->rank);
+	    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->sendees[i]);*/
+
             CMCondition_wait(fp_read_data->cm, fp->req.condition);
+	
+	    /*snprintf(name, sizeof(name), "done CMCond %d", fp->rank);	 
+	    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->sendees[i]);
+	    SOS_publish(pub);*/
+	    
 	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
 	    fp->req.num_completed = 0;
             fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
