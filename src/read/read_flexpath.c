@@ -201,6 +201,33 @@ flexpath_read_data* fp_read_data = NULL;
 
 /********** Helper functions. **********/
 
+// This function locks and unlocks the global metadata mutex
+void flexpath_wait_for_global_metadata(flexpath_reader_file * fp, int timestep)
+{
+
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_seperated_var_list * ts_var_list = find_var_list(fp, timestep);
+    if(ts_var_list == NULL)
+    {
+        create_flexpath_var_for_timestep(fp, timestep);
+        ts_var_list = find_var_list(fp, timestep);
+    }
+
+    //If we don't have the scalar data or if we haven't received a finalized message, wait
+    while(ts_var_list->is_list_filled == 0) 
+    {
+        fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", timestep);
+        pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
+        fp_verbose(fp, "Received signal! Last_writer_step:%d\t\tMystep:%d\n", fp->last_writer_step, timestep);
+    }
+
+    //This is called to marry the metadata with the flexpath vars after we receive the second message
+    //This is a bad way to do this, it may need to be fixed, ultimately
+    share_global_information(fp);
+    pthread_mutex_unlock(&(fp->queue_mutex));
+    fp_verbose(fp, "Finished wait on global data for timestep: %d\n", fp->mystep);
+}
+
 void build_bridge(bridge_info* bridge)
 {
     attr_list contact_list = attr_list_from_string(bridge->contact);
@@ -510,6 +537,8 @@ find_fp_var(flexpath_var * var_list, const char * varname)
     return NULL;
 }
 
+/*Here we are setting the dimensions of the flexpath vars from the 
+  global metadata */
 static void
 share_global_information(flexpath_reader_file * fp)
 {
@@ -517,7 +546,6 @@ share_global_information(flexpath_reader_file * fp)
     for (i = 0; i < fp->current_global_info->num_vars; i++)
     {
         global_var *gblvar = &(fp->current_global_info->vars[i]);
-        pthread_mutex_lock(&(fp->queue_mutex));
         timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
         if(!ts_var_list) 
         {
@@ -526,7 +554,6 @@ share_global_information(flexpath_reader_file * fp)
             exit(1);
         }
         flexpath_var *fpvar = find_fp_var(ts_var_list->var_list, gblvar->name);
-        pthread_mutex_unlock(&(fp->queue_mutex));
 
         if (fpvar) {
             offset_struct *offset = &gblvar->offsets[0];
@@ -1758,6 +1785,7 @@ adios_read_flexpath_open(const char * fname,
 
     fp_verbose(fp, "About to lock mutex and access timstep_seperated_var_list\n");
     // requesting initial data.
+    
     pthread_mutex_lock(&(fp->queue_mutex));
     //We need to check, because if the writer is fast, it might have already sent the data and created the
     //value in the list
@@ -1776,11 +1804,11 @@ adios_read_flexpath_open(const char * fname,
     }
 
     fp->current_global_info = find_relevant_global_data(fp);
+    share_global_information(fp);
     pthread_mutex_unlock(&(fp->queue_mutex));
 
     
     //Fix the last of the info the reader will need
-    share_global_information(fp);
     fp_verbose(fp, "Reader now has all of the information to begin scheduling reads for the first timestep\n");
     
     fp->data_read = 0;
@@ -1851,25 +1879,8 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     flexpath_reader_file *fp = (flexpath_reader_file*)adiosfile->fh;
     MPI_Barrier(fp->comm);
     int count = 0;
-
-    //Check to see if we have the next steps global metadata
-    pthread_mutex_lock(&(fp->queue_mutex));
-    timestep_seperated_var_list * ts_var_list = find_var_list(fp, ++(fp->mystep));
-    if(ts_var_list == NULL)
-    {
-        create_flexpath_var_for_timestep(fp, fp->mystep);
-        ts_var_list = find_var_list(fp, fp->mystep);
-    }
-
-    //If we don't have the scalar data or if we haven't received a finalized message, wait
-    while(ts_var_list->is_list_filled == 0 && (fp->last_writer_step != fp->mystep)) 
-    {
-        fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", fp->mystep);
-        pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
-        fp_verbose(fp, "Received signal! Last_writer_step:%d\t\tMystep:%d\n", fp->last_writer_step, fp->mystep);
-    }
-    pthread_mutex_unlock(&(fp->queue_mutex));
-    fp_verbose(fp, "Finished wait on global data for timestep: %d\n", fp->mystep);
+    
+    fp->mystep++;
 
     //If finalized, err_end_of_stream
     if(fp->last_writer_step == fp->mystep)
@@ -1878,6 +1889,9 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
         adios_errno = err_end_of_stream;
         return err_end_of_stream;
     }
+
+    //Check to see if we have the next steps global metadata
+    flexpath_wait_for_global_metadata(fp, fp->mystep)
 
     //Remove obsolete bookeeping information and update current_global_info
     pthread_mutex_lock(&(fp->queue_mutex));
@@ -1895,7 +1909,6 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     pthread_mutex_unlock(&(fp->queue_mutex));
 
     //Fix the last of the info the reader will need, this locks and unlocks the mutex so that's why we have it out here
-    share_global_information(fp);
 
     //Wait for all readers to reach this step, this should change in extended version
     //MPI_Barrier(fp->comm);
