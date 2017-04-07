@@ -293,27 +293,32 @@ static void
 create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
 {
     timestep_seperated_var_list * curr = fp->ts_var_list;
+    timestep_seperated_var_list * prev = NULL;
 
-    while(curr && curr->next != NULL)
+    //Check to see if we have made a mistake and we are trying to create something that has already 
+    //been created
+    while(curr)
     {
         if(curr->timestep == timestep)
         {
-            fp_verbose(fp, "Already created the timestep for timestep:%d\n", timestep);
+            fprintf(stderr, "Already created the timestep for timestep:%d\n", timestep);
             return;
         }
+        prev = curr;
         curr = curr->next;
     }
 
-    if(!curr)
+    //We are the first element in the queue 
+    if(!prev)
     {
         fp->ts_var_list = calloc(1, sizeof(*fp->ts_var_list));
         fp->ts_var_list->timestep = timestep;
     }
-    else
+    else //We are not the first element in the queue
     {
-        curr->next = calloc(1, sizeof(*fp->ts_var_list));
-        curr->next->timestep = timestep;
-        curr->next->var_list = pseudo_copy_flexpath_vars(fp->ts_var_list->var_list);
+        prev->next = calloc(1, sizeof(*fp->ts_var_list));
+        prev->next->timestep = timestep;
+        prev->next->var_list = pseudo_copy_flexpath_vars(fp->ts_var_list->var_list);
     } 
 
 }
@@ -517,11 +522,8 @@ share_global_information(flexpath_reader_file * fp)
         if(!ts_var_list) 
         {
             fprintf(stderr, "Error: could not find var list after it was reported that we had it!!\n");
-            if(!1)
-            {
-                fprintf(stderr, "Severe logic error!\n");
-                exit(1);
-            }
+            fprintf(stderr, "Severe logic error!\n");
+            exit(1);
         }
         flexpath_var *fpvar = find_fp_var(ts_var_list->var_list, gblvar->name);
         pthread_mutex_unlock(&(fp->queue_mutex));
@@ -1713,13 +1715,12 @@ adios_read_flexpath_open(const char * fname,
             reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
 
+        fp->req.condition = CMCondition_get(fp_read_data->cm, conn);
         CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
         attr_list writer_rank0_contact = attr_list_from_string(fp->bridges[0].contact);
         CMConnection conn = CMget_conn (fp_read_data->cm, writer_rank0_contact);
         CMwrite(conn, format, &reader_register);
 	free(recvbuf);
-        fp->req.condition = CMCondition_get(fp_read_data->cm, conn);
-        /*  loosing connection here.  Close it later */
 
         /* wait for "go" from writer */
         fp_verbose(fp, "waiting for go message in read_open, WAITING, condition %d\n", fp->req.condition);
@@ -1758,6 +1759,8 @@ adios_read_flexpath_open(const char * fname,
     fp_verbose(fp, "About to lock mutex and access timstep_seperated_var_list\n");
     // requesting initial data.
     pthread_mutex_lock(&(fp->queue_mutex));
+    //We need to check, because if the writer is fast, it might have already sent the data and created the
+    //value in the list
     timestep_seperated_var_list * ts_var_list = find_var_list(fp, fp->mystep);
     if(ts_var_list == NULL)
     {
@@ -1851,7 +1854,7 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
 
     //Check to see if we have the next steps global metadata
     pthread_mutex_lock(&(fp->queue_mutex));
-    timestep_seperated_var_list * ts_var_list = find_var_list(fp, ++fp->mystep);
+    timestep_seperated_var_list * ts_var_list = find_var_list(fp, ++(fp->mystep));
     if(ts_var_list == NULL)
     {
         create_flexpath_var_for_timestep(fp, fp->mystep);
