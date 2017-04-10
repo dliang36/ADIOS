@@ -67,7 +67,7 @@ int main (int argc, char ** argv)
     
       adios_close (adios_handle);
       fprintf(stderr, "Rank=%d commited write %d\n", rank, group_num);
-      sleep(11);
+      //sleep(11);
     }
     adios_finalize (rank);
 

@@ -119,7 +119,7 @@ else
 fi
 
 
-sleep 2
+#sleep 2
 
 # Spawn the reader
 if [ "$reader_mode" = "debug" ]; then
