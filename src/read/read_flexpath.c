@@ -164,8 +164,6 @@ typedef struct _flexpath_reader_file
     int writer_coordinator;
     int writer_coordinator_end;
 
-    int num_vars;
-    char ** var_namelist;
     timestep_separated_lists * ts_var_list;
     global_metadata_ptr global_info;
     evgroup * current_global_info;
@@ -479,6 +477,94 @@ free_displacements(array_displacements *displ, int num)
 }
 
 static void
+flexpath_free_bridges(int num_bridges, bridge_info * start_of_bridge_array)
+{
+    int i = 0;
+    for(; i < num_bridges; i++)
+    {
+        if(start_of_bridge_array[i].contact)
+        {
+            free(start_of_bridge_array[i].contact);
+            start_of_bridge_array[i].contact = NULL;
+        }
+
+        if(start_of_bridge_array[i].created)
+        {
+            EVfree_source(fp_read_data.cm, start_of_bridge_array[i].read_source);
+            EVfree_source(fp_read_data.cm, start_of_bridge_array[i].finalize_source);
+            EVfree_stone(fp_read_data.cm, start_of_bridge_array[i].bridge_stone);
+        }
+    }
+
+    free(start_of_bridge_array);
+}
+
+static void
+flexpath_free_filedata(flexpath_reader_file * fp)
+{
+    fp_verbose(fp, "Freeing the flexpath_reader_file metadata structure!\n");
+
+    //Free the stream name
+    if(fp->file_name)
+    {
+        free(fp->file_name);
+        fp->file_name = NULL;
+    }
+
+    //Free the adios group name
+    if(fp->group_name)
+    {
+        free(fp->group_name);
+        fp->file_name = NULL;
+    }
+
+    //Free the bridge data structure by calling the function that does that, then setting the pointer to NULL
+    if(fp->bridges)
+    {
+        flexpath_free_bridges(fp->num_bridges, fp->bridges);
+        fp->num_bridges = 0;
+        fp->bridges = NULL;
+    }
+
+    //Free the queue, no data should be coming in at this point, but I'm locking the queue anyway
+    pthread_mutex_lock(&(fp->queue_mutex));
+    timestep_separated_lists * curr = fp->ts_var_list;
+    while(curr)
+    {
+        flexpath_var * v = curr->var_list;
+        flexpath_var_free(v);
+        timestep_separated_lists * temp = curr->next;
+        free(curr);
+        curr = temp;
+    }
+    file->ts_var_list = NULL;
+    pthread_mutex_unlock(&(fp->queue_mutex));
+    
+    
+    if(fp->global_info)
+    {
+        while(fp->global_info)
+        {
+            global_metadata_ptr temp = fp->global_info->next;
+            free_evgroup(fp->global_info->metadata);
+            free(fp->global_info);
+            fp->global_info = temp;
+        }
+    }
+
+    if(fp->sendees)
+    {
+        free(fp->sendees);
+        fp->sendees = NULL;
+    }
+
+
+
+
+
+}
+
+static void
 flexpath_var_free(flexpath_var * tmpvars)
 {
     int i;
@@ -573,7 +659,7 @@ cleanup_flexpath_vars(flexpath_reader_file * fp, int timestep)
 
 }
 
-void
+static void
 free_evgroup(evgroup *gp)
 {
     EVreturn_event_buffer(fp_read_data->cm, gp);
@@ -591,12 +677,12 @@ remove_relevant_global_data(flexpath_reader_file * fp, int timestep)
         if(timestep >= curr->metadata->step)
         {
             global_metadata_ptr temp;
-            if(!prev)
+            if(!prev) //We are at the front of the queue
             {
                 fp->global_info = curr->next;
                 temp = fp->global_info;
             }
-            else
+            else //We are not at the front of the queue
             {
                 prev->next = curr->next;
                 temp = prev->next;
@@ -1056,7 +1142,8 @@ send_finalize_msg(flexpath_reader_file *fp)
     }
 }
 
-void send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
+static void
+send_read_msg(flexpath_reader_file *fp, int index, int use_condition)
 {
     //Initial sanity check
     if(index >= fp->num_sendees)
@@ -1771,6 +1858,9 @@ adios_read_flexpath_open(const char * fname,
             fp->bridges[num_bridges].step = 0;
             fp->bridges[num_bridges].opened = 0;
             fp->bridges[num_bridges].scheduled = 0;
+            fp->bridges[num_bridges].bridge_stone = -1;
+            fp->bridges[num_bridges].read_source = -1;
+            fp->bridges[num_bridges].finalize_source = -1;
             num_bridges++;
         }
         fp->num_bridges = --num_bridges;
@@ -1824,6 +1914,9 @@ adios_read_flexpath_open(const char * fname,
             fp->bridges[i].step = 0;
             fp->bridges[i].opened = 0;
             fp->bridges[i].scheduled = 0;
+            fp->bridges[i].bridge_stone = -1;
+            fp->bridges[i].read_source = -1;
+            fp->bridges[i].finalize_source = -1;
         }
         MPI_Barrier(MPI_COMM_WORLD);
         fp_verbose(fp, "Past the MPI_Barrier on the non-root side\n");
@@ -1962,33 +2055,9 @@ int adios_read_flexpath_close(ADIOS_FILE * fp)
     
     send_finalize_msg(file);
     
-    pthread_mutex_lock(&(file->queue_mutex));
-    timestep_separated_lists * curr = file->ts_var_list;
-    while(curr)
-    {
-        flexpath_var * v = curr->var_list;
-        while (v) {
-        	// free chunks; data has already been copied to user
-        	int i;
-        	for (i = 0; i<v->num_chunks; i++) {
-        	    flexpath_var_chunk *c = &v->chunks[i];
-    	    if (!c)
-    		log_error("FLEXPATH: %s This should not happen! line %d\n",__func__,__LINE__);
-    	    //free(c->data);
-    	    c->data = NULL;
-    	    free(c);
-    	}
-    	flexpath_var *tmp = v->next;
-    	free(v);
-    	v = tmp;
-        	//v=v->next;
-        }
-        timestep_separated_lists * temp = curr->next;
-        free(curr);
-        curr = temp;
-    }
-    file->ts_var_list = NULL;
-    pthread_mutex_unlock(&(file->queue_mutex));
+
+    flexpath_free_filedata(file);
+
     return 0;
 }
 
@@ -2057,9 +2126,14 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
 
     }
 
-    //Immediate_cleanup?
+    //Immediate_cleanup of sendee information
     free(fp->sendees);
     fp->sendees = NULL;
+
+    //Cleanup read_request_messages!
+    flexpath_free_read_request_message
+
+
     fp->num_sendees = 0;
 
     
