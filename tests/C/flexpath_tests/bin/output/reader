@@ -1,0 +1,161 @@
+openmpi-1.7
+Already created the timestep for timestep:0
+Already created the timestep for timestep:0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b9050602260, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26055 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 1, outputting to remote stone 0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b9050605cc0, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26030 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 2, outputting to remote stone 0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b9050605900, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26017 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 3, outputting to remote stone 0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b9050604e60, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26004 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 4, outputting to remote stone 0
+No action found for event 2b905060cf00 submitted to 
+local stone number 1
+Dump stone ID 1, local addr 1f46e00, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+
+	** use "format_info <format_name>" to get full format information ** 
+
+No action found for event 2b905060d400 submitted to 
+local stone number 2
+Dump stone ID 2, local addr 1f62740, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+No action found for event 2b905060d860 submitted to 
+local stone number 3
+Dump stone ID 3, local addr 1f68b80, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+No action found for event 2b905060dd20 submitted to 
+local stone number 4
+Dump stone ID 4, local addr 1f6ca40, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x1f53de0 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b25df502a00, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26055 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 1, outputting to remote stone 0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b25df503720, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26030 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 2, outputting to remote stone 0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b25df502d60, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26017 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 3, outputting to remote stone 0
+Errno was 111
+EVassoc_bridge_action - failed to contact host at contact point 
+	Attribute list 0x2b25df503160, ref_count = 1
+[
+    { IP_PORT ('0x8df2c994'), Attr_Int4, 26004 }
+    { IP_ADDR ('9˜'), Attr_Int4, 130.207.110.53 }
+]
+Bridge action association failed for stone 4, outputting to remote stone 0
+No action found for event 2b25df50b060 submitted to 
+local stone number 1
+Dump stone ID 1, local addr 16e98e0, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+
+	** use "format_info <format_name>" to get full format information ** 
+
+No action found for event 2b25df50b560 submitted to 
+local stone number 2
+Dump stone ID 2, local addr 16f9fe0, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+No action found for event 2b25df50b9c0 submitted to 
+local stone number 3
+Dump stone ID 3, local addr 1700460, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"
+No action found for event 2b25df50be80 submitted to 
+local stone number 4
+Dump stone ID 4, local addr 1704460, default action -1
+       Target Stones:  proto_action_count 0:
+  proto_action_count 0:
+  response_cache_count 2:
+Response cache item 0, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 0, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+Response cache item 1, reference format 0x16f5c40 (read_request:02000045caa148788d0abf57)
+stage 1, action_type Action_NoAction, proto_action_id 0, requires_decoded 0
+    Unhandled incoming event format was "read_request:02000045caa148788d0abf57"

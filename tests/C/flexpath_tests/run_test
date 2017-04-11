@@ -13,10 +13,10 @@ verbose_writer='1>/dev/null'
 no_timeout=0;
 
 # 3 is the file descriptor for the reader 
-exec 3<> /dev/null
+exec 3<> output/reader #/dev/null
 
 # 4 is the file descriptor for the writer 
-exec 4<> /dev/null
+exec 4<> output/writer #/dev/null
 
 gdb -v >/dev/null 2>&1 || { echo "status was $?"; debugger="lldb"; }
 $debugger -v >/dev/null 2>&1 || { debugger="not found"; }
