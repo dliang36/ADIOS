@@ -148,7 +148,7 @@ int main (int argc, char ** argv)
 	    }
 	}
         */
-        sleep(10);
+        //sleep(10);
         adios_release_step(afile);
         adios_advance_step(afile, 0, 30);
         ii++;

@@ -1601,6 +1601,18 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
     //fileData->gp = gp;       
 }
 
+/*Flexpath_close:
+ 
+    In this function we send out the global metadata and the scalars to our 
+    EVsources that are connected to the split stone for this member of the writer cohort.
+    The split stone is connected in adios_open to the bridge stones of the appropriate reader 
+    cohort members.  In addition we send all of the available data on this writer cohort to 
+    the multiqueue stone, where it is stored and managed.
+
+    There exists a single MPI_ALL_Gather operation in the exchange_dimension_data function in 
+    adios_close.  This is the synchronization point for the writers and it does not exist in the 
+    absence of global variables.
+*/
 extern void 
 adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *method) 
 {
@@ -1609,8 +1621,13 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
 
     fp_verbose(fileData, " adios_flexpath_close called\n");
 
+    //Timestep attr needed for raw handler on the reader side to determine which timestep the piece of data is 
+    //refering too.
     fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
 
+    //We create two attr_lists because we reference count them underneath and the two messages that we
+    //send out have got to be different.  We want to identify what is the only scalars message on the 
+    //reader side to process it differently.
     attr_list temp_attr_scalars = attr_copy_list(fileData->attrs);
     attr_list temp_attr_noscalars = attr_copy_list(fileData->attrs);
     
@@ -1624,21 +1641,22 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
 	gp->num_vars = 0;
 	gp->vars = NULL;
     } else {    
+        //Synchronization point due to MPI_All_Gather operation
         exchange_dimension_data(fd, gp, fileData);
     }   
 
-
-
+    //Used to strip out the array data and send only scalar data, array data is stripped out by setting pointer to NULL
     void* temp = copy_buffer_without_array(fileData->fm->buffer, fileData);
    
     temp_attr_scalars = set_only_scalars_atom(temp_attr_scalars, 1);
     temp_attr_noscalars = set_only_scalars_atom(temp_attr_noscalars, 0);
 
-    //Submit the messages that will get forwarded on immediately to the designated readers
+    //Submit the messages that will get forwarded on immediately to the designated readers through split stone
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
     EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
     free(temp);
 
+    //Full data is submitted to multiqueue stone
     EVsubmit_general(fileData->dataSource, fileData->fm->buffer, NULL, temp_attr_noscalars);
 
     free_attr_list(temp_attr_scalars);

@@ -1,7 +1,14 @@
 #!/bin/bash
 
-SRC_DIR="$PWD"
-OUT_DIR="$PWD/.."
+ADIOS_NAME=${PWD##*/}
+if [ $ADIOS_NAME != "ADIOS" ]
+then
+    echo "Error: make sure you are in the adios directory"
+    return 1
+fi
+
+SRC_DIR="$PWD/src"
+OUT_DIR="$PWD"
 
 if [ -e $OUT_DIR/cscope.files ]
 then
@@ -9,10 +16,10 @@ then
     rm $OUT_DIR/cscope.files $OUT_DIR/cscope.out
 fi
 
-cd /
+#cd /
 find $SRC_DIR -name '*.c' -o -name '*.h' > $OUT_DIR/cscope.files
 cd $OUT_DIR
 cscope -b
 export CSCOPE_DB=$OUT_DIR/cscope.out
 
-cd $SRC_DIR
+#cd $SRC_DIR
