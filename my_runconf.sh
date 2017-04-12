@@ -4,5 +4,5 @@
 
 export CC=mpicc
 export FC=mpif90
-./configure --prefix=/usr/local/adios --with-mxml \
+./configure --prefix=$HOME/local --with-mxml \
         --with-flexpath CFLAGS='-g -O0'
