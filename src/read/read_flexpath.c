@@ -424,11 +424,18 @@ flexpath_wait_for_global_metadata(flexpath_reader_file * fp, int timestep)
     }
 
     //If we don't have the scalar data or if we haven't received a finalized message, wait
-    while(ts_var_list->is_list_filled == 0) 
+    while(ts_var_list->is_list_filled == 0 && fp->mystep != fp->last_writer_step) 
     {
         fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", timestep);
         pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
         fp_verbose(fp, "Received signal! Last_writer_step:%d\t\tMystep:%d\n", fp->last_writer_step, timestep);
+    }
+
+    //To avoid a deadlock when the writer is slow to send the finalize message
+    if(fp->mystep == fp->last_writer_step)
+    {
+        pthread_mutex_unlock(&(fp->queue_mutex));
+        return;
     }
 
     //This is called to marry the metadata with the flexpath vars after we receive the second message
@@ -2053,6 +2060,11 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     
     fp->mystep++;
 
+
+    //Check to see if we have the next steps global metadata
+    fp_verbose(fp, "Waiting for global metadata in timestep:%d\n", fp->mystep);
+    flexpath_wait_for_global_metadata(fp, fp->mystep);
+
     //If finalized, err_end_of_stream
     if(fp->last_writer_step == fp->mystep)
     {
@@ -2060,10 +2072,6 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
         adios_errno = err_end_of_stream;
         return err_end_of_stream;
     }
-
-    //Check to see if we have the next steps global metadata
-    fp_verbose(fp, "Waiting for global metadata in timestep:%d\n", fp->mystep);
-    flexpath_wait_for_global_metadata(fp, fp->mystep);
 
     //Remove obsolete bookeeping information and update current_global_info
     pthread_mutex_lock(&(fp->queue_mutex));
