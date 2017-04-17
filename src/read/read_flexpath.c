@@ -262,7 +262,7 @@ create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
     {
         if(curr->timestep == timestep)
         {
-            fprintf(stderr, "Already created the timestep for timestep:%d\n", timestep);
+	    fp_verbose(fp, "Already created the timestep for timestep:%d\n", timestep);
             return;
         }
         prev = curr;
@@ -515,7 +515,6 @@ flexpath_free_bridges(int num_bridges, bridge_info * start_of_bridge_array)
     {
         if(start_of_bridge_array[i].contact)
         {
-            printf("We are about to free the contact!\n");
             free(start_of_bridge_array[i].contact);
             start_of_bridge_array[i].contact = NULL;
         }
@@ -606,7 +605,6 @@ flexpath_free_filedata(flexpath_reader_file * fp)
     //Free the bridge data structure by calling the function that does that, then setting the pointer to NULL
     if(fp->bridges)
     {
-        printf("We are freeing the bridges!\n");
         flexpath_free_bridges(fp->num_bridges, fp->bridges);
         fp->num_bridges = 0;
         fp->bridges = NULL;
