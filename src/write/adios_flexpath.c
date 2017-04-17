@@ -1111,7 +1111,7 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     CMConnection_add_reference(conn);
     char *recv_buf;
     char ** recv_buf_ptr = CMCondition_get_client_data(cm, msg->condition);
-    recv_buf = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
+    recv_buf = (char *)calloc(fileData->numBridges, CONTACT_LENGTH);
     fp_verbose(fileData, "Reader Register handler called!\n");
     int total_num_readers;
     fileData->total_num_readers = msg->contact_count;
@@ -1212,7 +1212,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     MPI_Comm_rank((fileData->mpiComm), &fileData->rank);
     MPI_Comm_size((fileData->mpiComm), &fileData->size);
     char *recv_buff = NULL;
-    char sendmsg[CONTACT_LENGTH];
+    char sendmsg[CONTACT_LENGTH] = {0};
     if (fileData->rank == 0) {
         recv_buff = (char *) malloc(fileData->size*CONTACT_LENGTH*sizeof(char));
     }
@@ -1633,6 +1633,7 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     
     // now gather offsets and send them via MPI to root
     evgroup *gp = malloc(sizeof(evgroup));    
+    memset(gp, 0, sizeof(evgroup));
     gp->group_name = strdup(method->group->name);
     gp->process_id = fileData->rank;
     gp->step = fileData->writerStep;
