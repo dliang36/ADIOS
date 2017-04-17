@@ -1247,6 +1247,7 @@ add_var_to_read_message(flexpath_reader_file *fp, int destination, char *varname
             fp->sendees=realloc(fp->sendees, fp->num_sendees*sizeof(int));
             fp->var_read_requests=realloc(fp->var_read_requests, fp->num_sendees*sizeof(read_request_msg));
             fp->sendees[fp->num_sendees-1] = destination;
+	    memset(&fp->var_read_requests[fp->num_sendees-1], 0, sizeof(read_request_msg));
             fp->var_read_requests[fp->num_sendees-1].process_return_id = fp->rank;
             fp->var_read_requests[fp->num_sendees-1].timestep_requested = fp->mystep;
             fp->var_read_requests[fp->num_sendees-1].current_lamport_min = -1;
@@ -1867,7 +1868,7 @@ adios_read_flexpath_open(const char * fname,
 				adiosfile);
 
     char *string_list;
-    char data_contact_info[CONTACT_LENGTH];
+    char data_contact_info[CONTACT_LENGTH] = {0};
     string_list = attr_list_to_string(CMget_contact_list(fp_read_data->cm));
     sprintf(&data_contact_info[0], "%d:%s", fp->stone, string_list);
     free(string_list);
