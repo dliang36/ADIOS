@@ -1111,7 +1111,7 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     CMConnection_add_reference(conn);
     char *recv_buf;
     char ** recv_buf_ptr = CMCondition_get_client_data(cm, msg->condition);
-    recv_buf = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
+    recv_buf = (char *)calloc(fileData->numBridges, CONTACT_LENGTH);
     fp_verbose(fileData, "Reader Register handler called!\n");
     int total_num_readers;
     fileData->total_num_readers = msg->contact_count;
@@ -1212,7 +1212,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     MPI_Comm_rank((fileData->mpiComm), &fileData->rank);
     MPI_Comm_size((fileData->mpiComm), &fileData->size);
     char *recv_buff = NULL;
-    char sendmsg[CONTACT_LENGTH];
+    char sendmsg[CONTACT_LENGTH] = {0};
     if (fileData->rank == 0) {
         recv_buff = (char *) malloc(fileData->size*CONTACT_LENGTH*sizeof(char));
     }
@@ -1601,6 +1601,13 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
     //fileData->gp = gp;       
 }
 
+/* This function is used to free the data when it is no longer needed by EVPath */
+static void
+free_data_buffer(void * event_data, void * client_data)
+{
+    free(event_data);
+}
+
 /*Flexpath_close:
  
     In this function we send out the global metadata and the scalars to our 
@@ -1633,6 +1640,7 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     
     // now gather offsets and send them via MPI to root
     evgroup *gp = malloc(sizeof(evgroup));    
+    memset(gp, 0, sizeof(evgroup));
     gp->group_name = strdup(method->group->name);
     gp->process_id = fileData->rank;
     gp->step = fileData->writerStep;
@@ -1651,13 +1659,16 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     temp_attr_scalars = set_only_scalars_atom(temp_attr_scalars, 1);
     temp_attr_noscalars = set_only_scalars_atom(temp_attr_noscalars, 0);
 
+    //Need to make a copy as we reuse the fileData->fm in every step...
+    void *buffer = malloc(fileData->fm->size);    
+    memcpy(buffer, fileData->fm->buffer, fileData->fm->size);
+
     //Submit the messages that will get forwarded on immediately to the designated readers through split stone
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
-    EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
-    free(temp);
+    EVsubmit_general(fileData->scalarDataSource, temp, free_data_buffer, temp_attr_scalars);
 
     //Full data is submitted to multiqueue stone
-    EVsubmit_general(fileData->dataSource, fileData->fm->buffer, NULL, temp_attr_noscalars);
+    EVsubmit_general(fileData->dataSource, buffer, free_data_buffer, temp_attr_noscalars);
 
     free_attr_list(temp_attr_scalars);
     free_attr_list(temp_attr_noscalars);

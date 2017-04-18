@@ -266,7 +266,7 @@ create_flexpath_var_for_timestep(flexpath_reader_file * fp, int timestep)
     {
         if(curr->timestep == timestep)
         {
-            fprintf(stderr, "Already created the timestep for timestep:%d\n", timestep);
+	    fp_verbose(fp, "Already created the timestep for timestep:%d\n", timestep);
             return;
         }
         prev = curr;
@@ -428,11 +428,18 @@ flexpath_wait_for_global_metadata(flexpath_reader_file * fp, int timestep)
     }
 
     //If we don't have the scalar data or if we haven't received a finalized message, wait
-    while(ts_var_list->is_list_filled == 0) 
+    while(ts_var_list->is_list_filled == 0 && fp->mystep != fp->last_writer_step) 
     {
         fp_verbose(fp, "Waiting for writer to send the global data for timestep: %d\n", timestep);
         pthread_cond_wait(&(fp->queue_condition), &(fp->queue_mutex));
         fp_verbose(fp, "Received signal! Last_writer_step:%d\t\tMystep:%d\n", fp->last_writer_step, timestep);
+    }
+
+    //To avoid a deadlock when the writer is slow to send the finalize message
+    if(fp->mystep == fp->last_writer_step)
+    {
+        pthread_mutex_unlock(&(fp->queue_mutex));
+        return;
     }
 
     //This is called to marry the metadata with the flexpath vars after we receive the second message
@@ -512,7 +519,6 @@ flexpath_free_bridges(int num_bridges, bridge_info * start_of_bridge_array)
     {
         if(start_of_bridge_array[i].contact)
         {
-            printf("We are about to free the contact!\n");
             free(start_of_bridge_array[i].contact);
             start_of_bridge_array[i].contact = NULL;
         }
@@ -561,12 +567,13 @@ flexpath_var_free(flexpath_var * tmpvars)
 	for (i=0; i<tmpvars->num_chunks; i++) {
 	    flexpath_var_chunk *chunk = &tmpvars->chunks[i];
 	    if (chunk->has_data) {
-		free(chunk->data);
+		//free(chunk->data);
 		chunk->data = NULL;
 		chunk->has_data = 0;
 	    }
 	    chunk->rank = 0;
 	}
+	
 
 
         flexpath_var * tmp = tmpvars->next;
@@ -603,7 +610,6 @@ flexpath_free_filedata(flexpath_reader_file * fp)
     //Free the bridge data structure by calling the function that does that, then setting the pointer to NULL
     if(fp->bridges)
     {
-        printf("We are freeing the bridges!\n");
         flexpath_free_bridges(fp->num_bridges, fp->bridges);
         fp->num_bridges = 0;
         fp->bridges = NULL;
@@ -1244,6 +1250,7 @@ add_var_to_read_message(flexpath_reader_file *fp, int destination, char *varname
             fp->sendees=realloc(fp->sendees, fp->num_sendees*sizeof(int));
             fp->var_read_requests=realloc(fp->var_read_requests, fp->num_sendees*sizeof(read_request_msg));
             fp->sendees[fp->num_sendees-1] = destination;
+	    memset(&fp->var_read_requests[fp->num_sendees-1], 0, sizeof(read_request_msg));
             fp->var_read_requests[fp->num_sendees-1].process_return_id = fp->rank;
             fp->var_read_requests[fp->num_sendees-1].timestep_requested = fp->mystep;
             fp->var_read_requests[fp->num_sendees-1].current_lamport_min = -1;
@@ -1484,6 +1491,8 @@ extract_selection_from_partial(int element_size, uint64_t dims, uint64_t *global
     free(partial_index);
     source_block_start_offset *= element_size;
 
+    double * temp_doub = (double *) selection;
+
     data += source_block_start_offset;
     selection += dest_block_start_offset;
     int i;
@@ -1492,6 +1501,32 @@ extract_selection_from_partial(int element_size, uint64_t dims, uint64_t *global
 	data += source_block_stride;
 	selection += dest_block_stride;
     }
+    /*if(fp_read_data->rank == 0)
+    {
+	double prev = 0.0;
+    	int count = 0;
+    	for(i = 0; i < 2048*1024; i++)
+    	{
+    	    if(temp_doub[i] == 0)
+    	    {
+    	        count++;
+    	    }
+    	    else
+    	    {
+    	        if(count == 0)
+    	        {
+		  printf("%f, ", temp_doub[i]);
+    	        }
+    	        else
+    	        {
+		  printf("0.0[%d], %f", count, temp_doub[i]);
+		  count = 0;
+    	        }
+    	    }
+    	}
+    }
+*/
+	
     free(first_index);
 }
 
@@ -1674,7 +1709,8 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 		    if (disp) { // does this writer hold a chunk we've asked for
                         //fp_verbose(fp, "Var is in the displacement, it should have data that we've asked for!\n");
 
-			//print_displacement(disp, fp->rank);
+			//if(fp->rank == 0)
+			    //print_displacement(disp, fp->rank);
 
 			uint64_t *global_sel_start = var->sel->u.bb.start;
 			uint64_t *global_sel_count = var->sel->u.bb.count;
@@ -1689,6 +1725,22 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 									   f->field_name,
 									   base_data, 1);
 			char *reader_array = (char*)var->chunks[0].user_buf;
+			/*if(fp->rank == 0 && writer_rank == 0)
+			{
+			    printf("Global_sel_start: %ld, %ld, ...\n", global_sel_start[0], global_sel_start[1]);
+			    printf("Global_sel_count: %ld, %ld, ...\n", global_sel_count[0], global_sel_count[1]);
+			    printf("Global_dimensions: %ld, %ld, ...\n", global_dimensions[0], global_dimensions[1]);
+			    printf("disp->ndims: %ld\n", disp->ndims);
+			    printf("offsets_per_rank: %d\n", offsets_per_rank);
+			    printf("Writer_sizes: %ld, %ld, ...\n", writer_sizes[0], writer_sizes[1]);
+			    printf("Writer_offsets: %ld, %ld, ...\n", writer_offsets[0], writer_offsets[1]);
+			    printf("Writer_array: %f, %f, ...\n", ((double *)writer_array)[0],((double *) writer_array)[1]);
+			}
+			*/
+
+
+
+			    //printf("User_buffer_pointer:%p\n", var->chunks[0].user_buf);
 
 			extract_selection_from_partial(f->field_size, disp->ndims, global_dimensions,
 						       writer_offsets, writer_sizes,
@@ -1909,7 +1961,6 @@ adios_read_flexpath_open(const char * fname,
     }
 
     flexpath_reader_file *fp = new_flexpath_reader_file(fname);
-    fp_verbose(fp, "entering flexpath_open\n");
     fp->host_language = futils_is_called_from_fortran();
     adios_errno = 0;
     fp->stone = EValloc_stone(fp_read_data->cm);
@@ -1920,6 +1971,8 @@ adios_read_flexpath_open(const char * fname,
 
     MPI_Comm_size(fp->comm, &(fp->size));
     MPI_Comm_rank(fp->comm, &(fp->rank));
+
+    fp_verbose(fp, "entering flexpath_open\n");
 
     EVassoc_terminal_action(fp_read_data->cm,
 			    fp->stone,
@@ -1939,7 +1992,7 @@ adios_read_flexpath_open(const char * fname,
 				adiosfile);
 
     char *string_list;
-    char data_contact_info[CONTACT_LENGTH];
+    char data_contact_info[CONTACT_LENGTH] = {0};
     string_list = attr_list_to_string(CMget_contact_list(fp_read_data->cm));
     sprintf(&data_contact_info[0], "%d:%s", fp->stone, string_list);
     free(string_list);
@@ -2153,6 +2206,11 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     }
     fp->mystep++;
 
+
+    //Check to see if we have the next steps global metadata
+    fp_verbose(fp, "Waiting for global metadata in timestep:%d\n", fp->mystep);
+    flexpath_wait_for_global_metadata(fp, fp->mystep);
+
     //If finalized, err_end_of_stream
     if(fp->last_writer_step == fp->mystep)
     {
@@ -2160,10 +2218,6 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
         adios_errno = err_end_of_stream;
         return err_end_of_stream;
     }
-
-    //Check to see if we have the next steps global metadata
-    fp_verbose(fp, "Waiting for global metadata in timestep:%d\n", fp->mystep);
-    flexpath_wait_for_global_metadata(fp, fp->mystep);
 
     //Remove obsolete bookeeping information and update current_global_info
     pthread_mutex_lock(&(fp->queue_mutex));
