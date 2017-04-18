@@ -1665,8 +1665,7 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
 
     //Submit the messages that will get forwarded on immediately to the designated readers through split stone
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
-    EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
-    free(temp);
+    EVsubmit_general(fileData->scalarDataSource, temp, free_data_buffer, temp_attr_scalars);
 
     //Full data is submitted to multiqueue stone
     EVsubmit_general(fileData->dataSource, buffer, free_data_buffer, temp_attr_noscalars);
