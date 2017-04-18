@@ -563,12 +563,13 @@ flexpath_var_free(flexpath_var * tmpvars)
 	for (i=0; i<tmpvars->num_chunks; i++) {
 	    flexpath_var_chunk *chunk = &tmpvars->chunks[i];
 	    if (chunk->has_data) {
-		free(chunk->data);
+		//free(chunk->data);
 		chunk->data = NULL;
 		chunk->has_data = 0;
 	    }
 	    chunk->rank = 0;
 	}
+	
 
 
         flexpath_var * tmp = tmpvars->next;
@@ -1474,6 +1475,8 @@ extract_selection_from_partial(int element_size, uint64_t dims, uint64_t *global
     free(partial_index);
     source_block_start_offset *= element_size;
 
+    double * temp_doub = (double *) selection;
+
     data += source_block_start_offset;
     selection += dest_block_start_offset;
     int i;
@@ -1482,6 +1485,32 @@ extract_selection_from_partial(int element_size, uint64_t dims, uint64_t *global
 	data += source_block_stride;
 	selection += dest_block_stride;
     }
+    /*if(fp_read_data->rank == 0)
+    {
+	double prev = 0.0;
+    	int count = 0;
+    	for(i = 0; i < 2048*1024; i++)
+    	{
+    	    if(temp_doub[i] == 0)
+    	    {
+    	        count++;
+    	    }
+    	    else
+    	    {
+    	        if(count == 0)
+    	        {
+		  printf("%f, ", temp_doub[i]);
+    	        }
+    	        else
+    	        {
+		  printf("0.0[%d], %f", count, temp_doub[i]);
+		  count = 0;
+    	        }
+    	    }
+    	}
+    }
+*/
+	
     free(first_index);
 }
 
@@ -1639,7 +1668,8 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 		    if (disp) { // does this writer hold a chunk we've asked for
                         //fp_verbose(fp, "Var is in the displacement, it should have data that we've asked for!\n");
 
-			//print_displacement(disp, fp->rank);
+			//if(fp->rank == 0)
+			    //print_displacement(disp, fp->rank);
 
 			uint64_t *global_sel_start = var->sel->u.bb.start;
 			uint64_t *global_sel_count = var->sel->u.bb.count;
@@ -1654,6 +1684,22 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 									   f->field_name,
 									   base_data, 1);
 			char *reader_array = (char*)var->chunks[0].user_buf;
+			/*if(fp->rank == 0 && writer_rank == 0)
+			{
+			    printf("Global_sel_start: %ld, %ld, ...\n", global_sel_start[0], global_sel_start[1]);
+			    printf("Global_sel_count: %ld, %ld, ...\n", global_sel_count[0], global_sel_count[1]);
+			    printf("Global_dimensions: %ld, %ld, ...\n", global_dimensions[0], global_dimensions[1]);
+			    printf("disp->ndims: %ld\n", disp->ndims);
+			    printf("offsets_per_rank: %d\n", offsets_per_rank);
+			    printf("Writer_sizes: %ld, %ld, ...\n", writer_sizes[0], writer_sizes[1]);
+			    printf("Writer_offsets: %ld, %ld, ...\n", writer_offsets[0], writer_offsets[1]);
+			    printf("Writer_array: %f, %f, ...\n", ((double *)writer_array)[0],((double *) writer_array)[1]);
+			}
+			*/
+
+
+
+			    //printf("User_buffer_pointer:%p\n", var->chunks[0].user_buf);
 
 			extract_selection_from_partial(f->field_size, disp->ndims, global_dimensions,
 						       writer_offsets, writer_sizes,
@@ -1836,7 +1882,6 @@ adios_read_flexpath_open(const char * fname,
     }
 
     flexpath_reader_file *fp = new_flexpath_reader_file(fname);
-    fp_verbose(fp, "entering flexpath_open\n");
     fp->host_language = futils_is_called_from_fortran();
     adios_errno = 0;
     fp->stone = EValloc_stone(fp_read_data->cm);
@@ -1847,6 +1892,8 @@ adios_read_flexpath_open(const char * fname,
 
     MPI_Comm_size(fp->comm, &(fp->size));
     MPI_Comm_rank(fp->comm, &(fp->rank));
+
+    fp_verbose(fp, "entering flexpath_open\n");
 
     EVassoc_terminal_action(fp_read_data->cm,
 			    fp->stone,
