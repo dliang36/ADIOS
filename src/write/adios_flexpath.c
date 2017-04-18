@@ -1601,6 +1601,13 @@ exchange_dimension_data(struct adios_file_struct *fd, evgroup *gp, FlexpathWrite
     //fileData->gp = gp;       
 }
 
+/* This function is used to free the data when it is no longer needed by EVPath */
+static void
+free_data_buffer(void * event_data, void * client_data)
+{
+    free(event_data);
+}
+
 /*Flexpath_close:
  
     In this function we send out the global metadata and the scalars to our 
@@ -1652,13 +1659,17 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     temp_attr_scalars = set_only_scalars_atom(temp_attr_scalars, 1);
     temp_attr_noscalars = set_only_scalars_atom(temp_attr_noscalars, 0);
 
+    //Need to make a copy as we reuse the fileData->fm in every step...
+    void *buffer = malloc(fileData->fm->size);    
+    memcpy(buffer, fileData->fm->buffer, fileData->fm->size);
+
     //Submit the messages that will get forwarded on immediately to the designated readers through split stone
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
     EVsubmit_general(fileData->scalarDataSource, temp, NULL, temp_attr_scalars);
     free(temp);
 
     //Full data is submitted to multiqueue stone
-    EVsubmit_general(fileData->dataSource, fileData->fm->buffer, NULL, temp_attr_noscalars);
+    EVsubmit_general(fileData->dataSource, buffer, free_data_buffer, temp_attr_noscalars);
 
     free_attr_list(temp_attr_scalars);
     free_attr_list(temp_attr_noscalars);
