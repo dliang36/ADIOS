@@ -18,7 +18,7 @@ exec 3<> /dev/null
 # 4 is the file descriptor for the writer 
 exec 4<> /dev/null
 
-gdb -v >/dev/null 2>&1 || { echo "status was $?"; debugger="lldb"; }
+gdb -v >/dev/null 2>&1 || { debugger="lldb"; }
 $debugger -v >/dev/null 2>&1 || { debugger="not found"; }
 
 usage() 
@@ -111,11 +111,11 @@ if [ "$writer_mode" = "debug" ]; then
 	echo "Unknown debugger \"$debugger\"";
     fi
 elif [ "$writer_mode" = "valgrind" ]; then 
-    echo "Doing     (mpirun -n $nw xterm -hold -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!"
+#    echo "Doing     (mpirun -n $nw xterm -hold -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!"
     (mpirun -n $nw xterm -hold -sl 10000 -e valgrind --tool=memcheck ./$writer_prog -t $transport ) & writer_pid=$!
 else
-    echo "Doing        (mpirun -n $nw ./$writer_prog -t $transport 1>&4 2>&1) & writer_pid=$!"
-    (mpirun -n $nw ./$writer_prog -t $transport 1>&4 2>&1 ) & writer_pid=$!
+#    echo "Doing        (mpirun -output-filename writer_out -n $nw ./$writer_prog -t $transport 1>&4 2>&1) & writer_pid=$!"
+    (mpirun -output-filename writer_out -n $nw ./$writer_prog -t $transport 1>&4 2>&1 ) & writer_pid=$!
 fi
 
 
@@ -133,16 +133,13 @@ if [ "$reader_mode" = "debug" ]; then
 elif [ "$reader_mode" = "valgrind" ]; then 
     (mpirun -n $nr xterm -hold -sl 10000 -e valgrind --tool=memcheck ./$reader_prog -t $transport ) & reader_pid=$!
 else
-    (mpirun -n $nr ./$reader_prog -t $transport 1>&3 2>&1) & reader_pid=$!
+    (mpirun -output-filename reader_out -n $nr ./$reader_prog -t $transport 1>&3 2>&1) & reader_pid=$!
 fi
 
 # in the background, sleep for timeout secs then kill that processes
 if [ $no_timeout -eq 0 ]
 then
-    echo "Sleeping for $timeout"
     (sleep $timeout && kill -9 $reader_pid && kill -9 $writer_pid 2>/dev/null) & waiter=$!
-else
-    echo "No timeout...moving on."
 fi
 
 # wait on our worker process and return the exitcode
@@ -157,11 +154,12 @@ writer_exitcode=$?
 finished_gracefully=0
 if [ $no_timeout -eq 0 ]
 then
-    kill -9 $waiter 2>/dev/null
+    CPIDS=$(pgrep -P $waiter)
+    kill -9 $waiter $CPIDS 2>/dev/null ; kill -TERM $waiter $CPIDS 2>/dev/null ; 
     # 0 if we killed the waiter, cause that means the process finished before the waiter
     finished_gracefully=$?
     # wait for waiter so that we don't get a killed message
-    wait $waiter 2>/dev/null
+    wait $waiter $CPIDS 2>/dev/null
 fi
 
 
