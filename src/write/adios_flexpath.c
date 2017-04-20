@@ -1173,6 +1173,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 		    MPI_Comm comm) 
 {    
     struct timeval t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
+    struct timeval t50, t51, t52, t53, t54, t55;
     int i;
     if ( fd == NULL || method == NULL) {
         perr("open: Bad input parameters\n");
@@ -1308,14 +1309,19 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     fileData->fm = set_format(t, fields, fileData);
     gettimeofday (&t5, NULL); 
+    gettimeofday (&t50, NULL); 
 
 
     // attach rank attr and add file to open list
     fileData->name = strdup(method->group->name); 
+    gettimeofday (&t51, NULL); 
     add_open_file(fileData);
+    gettimeofday (&t52, NULL); 
     //Template for all other attrs set here
     atom_t rank_atom = attr_atom_from_string(FP_RANK_ATTR_NAME);
+    gettimeofday (&t53, NULL); 
     add_int_attr(fileData->attrs, rank_atom, fileData->rank);   
+    gettimeofday (&t54, NULL); 
 
     //generate multiqueue function that sends formats or all data based on flush msg
 
@@ -1324,6 +1330,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
                                      data_format_list,
 				     NULL};
 
+    gettimeofday (&t55, NULL); 
 
     gettimeofday (&t6, NULL); 
     char* q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action); 
@@ -1419,12 +1426,18 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     if(fileData->verbose) {
         struct timeval diff1, diff2, diff3, diff4, diff5, diff6, diff7, diff8, diff9;
+        struct timeval diff51, diff52, diff53, diff54, diff55;
         dump_diff(0, 1);
         dump_diff(1, 2);
         dump_diff(2, 3);
         dump_diff(3, 4);
         dump_diff(4, 5);
         dump_diff(5, 6);
+        dump_diff(50, 51);
+        dump_diff(51, 52);
+        dump_diff(52, 53);
+        dump_diff(53, 54);
+        dump_diff(54, 55);
         dump_diff(6, 7);
         dump_diff(7, 8);
         dump_diff(8, 9);
