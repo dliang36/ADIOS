@@ -1228,6 +1228,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     MPI_Gather(sendmsg, CONTACT_LENGTH, MPI_CHAR, recv_buff, 
         CONTACT_LENGTH, MPI_CHAR, 0, (fileData->mpiComm));
 
+    fp_verbose(fileData, "Gather of writer contact data to rank 0 is complete\n");
     //TODO: recv_buff has a small memory leak here because of register_reader_handler
     // rank 0 prints contact info to file
     if (fileData->rank == 0) {
