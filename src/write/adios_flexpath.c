@@ -1172,6 +1172,8 @@ adios_flexpath_open(struct adios_file_struct *fd,
 		    struct adios_method_struct *method, 
 		    MPI_Comm comm) 
 {    
+    struct timeval t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
+    struct timeval t50, t51, t52, t53, t54, t55;
     int i;
     if ( fd == NULL || method == NULL) {
         perr("open: Bad input parameters\n");
@@ -1227,6 +1229,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     MPI_Gather(sendmsg, CONTACT_LENGTH, MPI_CHAR, recv_buff, 
         CONTACT_LENGTH, MPI_CHAR, 0, (fileData->mpiComm));
 
+    fp_verbose(fileData, "Gather of writer contact data to rank 0 is complete\n");
     //TODO: recv_buff has a small memory leak here because of register_reader_handler
     // rank 0 prints contact info to file
     if (fileData->rank == 0) {
@@ -1246,20 +1249,23 @@ adios_flexpath_open(struct adios_file_struct *fd,
         /* wait for reader to wake up, tell us he's ready (and provide his contact info) */
 
         CMCondition_wait(flexpathWriteData.cm, condition);
+        gettimeofday (&t0, NULL); 
         /* recv_buff and fileData->numBridges have been filled in by the reader_register_handler */
         MPI_Bcast(&fileData->numBridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(&fileData->total_num_readers, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(recv_buff, fileData->numBridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
-
-
-
+        gettimeofday (&t1, NULL); 
         unlink(writer_info_filename);
+        gettimeofday (&t2, NULL); 
     } else {
+        gettimeofday (&t0, NULL); 
         MPI_Bcast(&fileData->numBridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
         MPI_Bcast(&fileData->total_num_readers, 1, MPI_INT, 0, MPI_COMM_WORLD);
         recv_buff = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
         MPI_Bcast(recv_buff, fileData->numBridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
         /*Could get rid of the old array here, but maybe not*/
+        gettimeofday (&t1, NULL); 
+        gettimeofday (&t2, NULL); 
     }
     
     create_inform_reader_array(fileData);
@@ -1282,7 +1288,9 @@ adios_flexpath_open(struct adios_file_struct *fd,
     }
 
 
+    gettimeofday (&t3, NULL); 
     MPI_Barrier((fileData->mpiComm));
+    gettimeofday (&t4, NULL); 
     
 	
     //process group format
@@ -1300,14 +1308,20 @@ adios_flexpath_open(struct adios_file_struct *fd,
     }	
 
     fileData->fm = set_format(t, fields, fileData);
+    gettimeofday (&t5, NULL); 
+    gettimeofday (&t50, NULL); 
 
 
     // attach rank attr and add file to open list
     fileData->name = strdup(method->group->name); 
+    gettimeofday (&t51, NULL); 
     add_open_file(fileData);
+    gettimeofday (&t52, NULL); 
     //Template for all other attrs set here
     atom_t rank_atom = attr_atom_from_string(FP_RANK_ATTR_NAME);
+    gettimeofday (&t53, NULL); 
     add_int_attr(fileData->attrs, rank_atom, fileData->rank);   
+    gettimeofday (&t54, NULL); 
 
     //generate multiqueue function that sends formats or all data based on flush msg
 
@@ -1316,7 +1330,9 @@ adios_flexpath_open(struct adios_file_struct *fd,
                                      data_format_list,
 				     NULL};
 
+    gettimeofday (&t55, NULL); 
 
+    gettimeofday (&t6, NULL); 
     char* q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action); 
 
 
@@ -1380,10 +1396,12 @@ adios_flexpath_open(struct adios_file_struct *fd,
                                   fileData->split_action, 
                                   fileData->bridges[fileData->readers_to_inform_ranks[i]].myNum);
     }
+    gettimeofday (&t6, NULL); 
 
     FMContext my_context = create_local_FMcontext();
     fileData->fm->ioFormat = register_data_format(my_context, fileData->fm->format);
 
+    gettimeofday (&t7, NULL); 
     //Set this up here so that the reader can close without waiting for the end of the stream
     fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
     
@@ -1393,8 +1411,38 @@ adios_flexpath_open(struct adios_file_struct *fd,
         go_msg.start_timestep = 0;
 //        go_msg.file_attributes = 
         CMFormat format = CMregister_simple_format(flexpathWriteData.cm, "Flexpath reader go", reader_go_field_list, sizeof(reader_go_msg));
+        fp_verbose(fileData, "Writer Rank 0 sending GO message to reader rank 0\n");
+        gettimeofday (&t8, NULL); 
         CMwrite(fileData->reader_0_conn, format, &go_msg);
+        gettimeofday (&t9, NULL); 
+    } else {
+        gettimeofday(&t8, NULL);
+        gettimeofday(&t9, NULL);
     }
+
+#define dump_diff(x,y) \
+    timersub(&t ## y, &t ## x, &diff ## y);\
+    fprintf(stderr, "Rank %d - time from "#x" to "#y" was <%ld.%06d> secs\n", fileData->rank, diff ## y.tv_sec, diff ## y.tv_usec);
+
+    if(fileData->verbose) {
+        struct timeval diff1, diff2, diff3, diff4, diff5, diff6, diff7, diff8, diff9;
+        struct timeval diff51, diff52, diff53, diff54, diff55;
+        dump_diff(0, 1);
+        dump_diff(1, 2);
+        dump_diff(2, 3);
+        dump_diff(3, 4);
+        dump_diff(4, 5);
+        dump_diff(5, 6);
+        dump_diff(50, 51);
+        dump_diff(51, 52);
+        dump_diff(52, 53);
+        dump_diff(53, 54);
+        dump_diff(54, 55);
+        dump_diff(6, 7);
+        dump_diff(7, 8);
+        dump_diff(8, 9);
+    }
+
     return 0;	
 }
 
