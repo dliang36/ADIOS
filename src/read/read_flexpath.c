@@ -1530,8 +1530,6 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     FMContext context = CMget_FMcontext(cm);
     void *base_data = FMheader_skip(context, vevent);
     FMFormat format = FMformat_from_ID(context, vevent);
-    timestep_separated_lists * curr_var_list = flexpath_get_curr_timestep_list(fp);
-    fp_verbose(fp, "Received data message!  (%d of %d)\n", curr_var_list->req_cond.num_completed+1, curr_var_list->req_cond.num_pending);
 
     // copy //FMfree_struct_desc_list call
     FMStructDescList struct_list = FMcopy_struct_list(format_list_of_FMFormat(format));
@@ -1730,8 +1728,10 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     //EVgroup message on the writer side
     if(!only_scalars)
     {
-        fp_verbose(fp, "Reporting received data for timestep:%d, from writer rank %d\n", timestep, writer_rank);
+        timestep_separated_lists * curr_var_list = flexpath_get_curr_timestep_list(fp);
+        fp_verbose(fp, "Reporting received data for timestep:%d from writer %d\n", timestep, writer_rank);
         curr_var_list->req_cond.num_completed++;
+        fp_verbose(fp, "Received data message!  (%d of %d)\n", curr_var_list->req_cond.num_completed, curr_var_list->req_cond.num_pending);
         /* fprintf(stderr, "\t\treader rank:%d:step:%d:num_completed:%d:num_pending:%d\n", */
         /* 	    fp->rank, fp->mystep, fp->req.num_completed, fp->req.num_pending); */
         if (curr_var_list->req_cond.num_completed == curr_var_list->req_cond.num_pending) {
@@ -1743,7 +1743,7 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     }
     else
     {
-        fp_verbose(fp, "Only scalars message received for timestep:%d, from writer rank %d\n", timestep, writer_rank);
+        fp_verbose(fp, "Only scalars message received for timestep:%d from writer %d\n", timestep, writer_rank);
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_separated_lists * ts_var_list = find_var_list(fp, timestep);
         ts_var_list->is_list_filled = 1;
