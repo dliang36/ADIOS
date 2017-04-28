@@ -17,6 +17,7 @@
 
 // xml parser
 #include <mxml.h>
+#include <cod.h>
 
 // add by Kimmy 10/15/2012
 #include <sys/types.h>
@@ -42,7 +43,6 @@
 
 // // evpath libraries
 #include <evpath.h>
-#include <cod.h>
 #define FLEXPATH_SIDE "WRITER"
 #include "core/flexpath.h"
 #include <sys/queue.h>
@@ -470,6 +470,7 @@ char * multiqueue_action = "{\n\
             int time_req;\n\
             read_msg = EVdata_read_request(0);\n\
             time_req = read_msg->timestep_requested;\n\
+	    fp_verbose(\"Read request received for timestep %d, from reader %d\\n\", time_req, read_msg->process_return_id);\n \
             int j;\n\
             for(j = 0; j < EVcount_anonymous(); j++)\n\
             {\n\
@@ -485,6 +486,7 @@ char * multiqueue_action = "{\n\
                 {\n\
                     int target;\n\
                     target = read_msg->process_return_id;\n\
+		    fp_verbose(\"Data for timestep %d sent to reader %d\\n\", read_msg->timestep_requested, read_msg->process_return_id);\n\
                     EVsubmit_anonymous(target + 1, j);\n\
                     EVdiscard_read_request(i);\n\
                     i--;\n\
@@ -507,6 +509,7 @@ finalize_msg_handler(CManager cm, void *vevent, void *client_data, attr_list att
 
     fp_verbose(fp, "Finalize msg handler called and signalled condition %d!\n", fp->final_condition);
 
+    return 0;
 }
 
 // sets a field based on data type
@@ -1126,17 +1129,38 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     CMCondition_signal(cm, msg->condition);
 }
 
+static void
+fp_verbose_wrapper(char *format, ...)
+{
+    static int fp_verbose_set = -1;
+    static int MPI_rank = -1;
+    if (fp_verbose_set == -1) {
+        fp_verbose_set = (getenv("FLEXPATH_VERBOSE") != NULL);
+        MPI_Comm_rank(MPI_COMM_WORLD, &MPI_rank);
+    }
+    if (fp_verbose_set) {
+        va_list args;
+
+        va_start(args, format);
+        fprintf(stdout, "%s %d:", FLEXPATH_SIDE, MPI_rank);
+        vfprintf(stdout, format, args);
+        va_end(args);
+    }
+}
+
 // Initializes flexpath write local data structures
 extern void 
 adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method) 
 {
+    static cod_extern_entry externs[] = {   {"fp_verbose", (void*) 0},    {NULL, NULL}};
     // global data structure creation
     flexpathWriteData.rank = -1;
     flexpathWriteData.openFiles = NULL;
-
+    externs[0].extern_value = fp_verbose_wrapper;
     // setup CM
     setenv("CMSelfFormats", "1", 1);
     flexpathWriteData.cm = CManager_create();
+    EVadd_standard_routines(flexpathWriteData.cm, "void fp_verbose(string format, ...);",  externs);
     atom_t CM_TRANSPORT = attr_atom_from_string("CM_TRANSPORT");
     char * transport = getenv("CMTransport");
     if (transport == NULL) {
@@ -1174,6 +1198,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 {    
     struct timeval t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
     struct timeval t60, t61, t62, t63, t64, t65, t66;
+    char* q_action_spec;
     int i;
     if ( fd == NULL || method == NULL) {
         perr("open: Bad input parameters\n");
@@ -1327,7 +1352,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     gettimeofday (&t6, NULL); 
     gettimeofday (&t60, NULL); 
 
-    char* q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action); 
+    q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action);
     gettimeofday (&t61, NULL); 
 
 
@@ -1712,15 +1737,19 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     memcpy(buffer, fileData->fm->buffer, fileData->fm->size);
 
     //Submit the messages that will get forwarded on immediately to the designated readers through split stone
+    fp_verbose(fileData, " adios_flexpath_close, submit group msg\n");
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
+    fp_verbose(fileData, " adios_flexpath_close, submit scalars\n");
     EVsubmit_general(fileData->scalarDataSource, temp, free_data_buffer, temp_attr_scalars);
 
     //Full data is submitted to multiqueue stone
+    fp_verbose(fileData, " adios_flexpath_close, submit full data\n");
     EVsubmit_general(fileData->dataSource, buffer, free_data_buffer, temp_attr_noscalars);
 
     free_attr_list(temp_attr_scalars);
     free_attr_list(temp_attr_noscalars);
     fileData->writerStep++;
+    fp_verbose(fileData, " adios_flexpath_close exit\n");
 }
 
 // wait until all open files have finished sending data to shutdown
