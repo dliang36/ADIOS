@@ -1,0 +1,5 @@
+In order to build with sosflow, please add the following option when running ./configure: --with-sosflow=yourSosflowBuildDir. For example, using the sosflow within the package and building on Linux, the option will be --with-sosflow=sos_flow/build-linux
+
+In order to enable sosflow, please set environment variable SOSFLOW_READ to 1 for reader side and/or SOSFLOW_WRITE to 1 for writer side.
+
+

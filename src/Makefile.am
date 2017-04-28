@@ -362,7 +362,8 @@ lib_LIBRARIES += libadios_nompi.a
 libadios_nompi_a_SOURCES = $(CLibSources) $(CLibSEQSources)
 libadios_nompi_a_CPPFLAGS = $(AM_CPPFLAGS) $(MACRODEFFLAG)_NOMPI $(ADIOSLIB_EXTRA_CPPFLAGS) $(ADIOSLIB_SEQ_CPPFLAGS) # $(MACRODEFFLAG)USE_TIMERS
 libadios_nompi_a_CFLAGS = $(MACRODEFFLAG)_NOMPI $(ADIOSLIB_SEQ_CFLAGS) 
-libadios_nompi_a_LIBADD = $(libcoreonce_a_OBJECTS)
+#libadios_nompi_a_LIBADD = $(libcoreonce_a_OBJECTS) /users/c/chaos/mona/lib/libsos.a
+libadios_nompi_a_LIBADD = $(libcoreonce_a_OBJECTS) ../sos_flow/build-linux/lib/libsos.a
 if BUILD_MXML
 libadios_nompi_a_LIBADD += ${MXML_OBJECTS} 
 endif
@@ -430,7 +431,8 @@ libadios_a_CPPFLAGS = $(AM_CPPFLAGS) $(ADIOSLIB_EXTRA_CPPFLAGS) $(ADIOSLIB_CPPFL
 libadios_a_CFLAGS = $(ADIOSLIB_CFLAGS) 
 
 
-libadios_a_LIBADD = $(libcoreonce_a_OBJECTS) 
+#libadios_a_LIBADD = $(libcoreonce_a_OBJECTS) /users/c/chaos/mona/lib/libsos.a
+libadios_a_LIBADD = $(libcoreonce_a_OBJECTS) ../sos_flow/build-linux/lib/libsos.a
 if BUILD_MXML
 libadios_a_LIBADD += ${MXML_OBJECTS} 
 endif
@@ -553,14 +555,14 @@ endif
 #libadiosread_nompi_a_CFLAGS   += $(ADIOSLIB_CFLAGS) 
 #endif
 if HAVE_DMALLOC
-libadiosread_nompi_a_CPPFLAGS += $(MACRODEFFLAG)DMALLOC 
+libadiosread_nompi_a_CPPFLAGS += $(MACRODEFFLAG)DMALLOC
 endif
 libadiosread_nompi_a_CPPFLAGS  += $(MACRODEFFLAG)_NOMPI $(ADIOSLIB_EXTRA_CPPFLAGS) $(ADIOSREADLIB_CPPFLAGS)
-libadiosread_nompi_a_LIBADD = $(libcoreonce_a_OBJECTS)
+libadiosread_nompi_a_LIBADD = $(libcoreonce_a_OBJECTS) 
 if BUILD_ZFP
 libadiosread_nompi_a_LIBADD += ${ZFP_OBJECTS} 
 endif BUILD_ZFP
-EXTRA_libadiosread_nompi_a_DEPENDENCIES = libcoreonce.a 
+EXTRA_libadiosread_nompi_a_DEPENDENCIES = libcoreonce.a libsos.a
 
 if BUILD_FORTRAN
 #
@@ -676,9 +678,10 @@ if HAVE_DMALLOC
 libadiosread_a_CPPFLAGS += $(MACRODEFFLAG)DMALLOC 
 endif
 
-
 libadiosread_a_CPPFLAGS += $(ADIOSLIB_EXTRA_CPPFLAGS) $(ADIOSREADLIB_CPPFLAGS)
-libadiosread_a_LIBADD = $(libcoreonce_a_OBJECTS)
+#libadiosread_a_LIBADD = $(libcoreonce_a_OBJECTS) /users/c/chaos/mona/lib/libsos.a /users/c/chaos/mona/lib/libsos_buffer.a /users/c/chaos/mona/lib/libsos_pipe.a
+libadiosread_a_LIBADD = $(libcoreonce_a_OBJECTS) ../sos_flow/build-linux/lib/libsos.a ../sos_flow/build-linux/lib/libsos_buffer.a ../sos_flow/build-linux/lib/libsos_pipe.a
+
 if BUILD_ZFP
 libadiosread_a_LIBADD += ${ZFP_OBJECTS} 
 endif BUILD_ZFP

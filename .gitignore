@@ -163,6 +163,7 @@ examples/Fortran/schema/uniform2d_f_noxml
 examples/staging/stage_write/genarray_stream
 examples/staging/stage_write/genarray_stream_comm.mod
 examples/staging/stage_write/stage_write
+sos_flow/build_linux/
 src/adios_defs_mod.mod
 src/adios_read_mod.mod
 src/adios_write_mod.mod
@@ -230,3 +231,6 @@ utils/query/index_fastbit
 # Eclipse files
 .ptp-sync/
 .ptp-sync-folder
+
+# SOSFLOW results
+sos_flow/sosd*

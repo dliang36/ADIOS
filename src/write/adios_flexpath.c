@@ -183,6 +183,11 @@ static char *opRepList[OPLEN] = { "_plus_", "_minus_", "_mult_", "_div_", "_dot_
 // used for global communication and data structures
 FlexpathWriteData flexpathWriteData;
 
+SOS_runtime *my_sos;
+SOS_pub *writerPub;
+bool use_sosflow = false;
+
+
 /**************************** Function Definitions *********************************/
 
 static void 
@@ -994,7 +999,8 @@ set_format(struct adios_group_struct *t,
     for (attr = t->attributes; attr != NULL; attr = attr->next, fieldNo++) {
 	char *fullname = append_path_name(attr->path, attr->name);
 	char *mangle_name = flexpath_mangle(fullname);
-	for (int i = 0; i < fieldNo; i++) {
+	int i = 0;
+	for (; i < fieldNo; i++) {
 	    if (strcmp(mangle_name, field_list[i].field_name) == 0) {
 		adios_error(err_invalid_group, "set_format:  The Flexpath transport does not allow multiple writes using the same name in a single group, variable %s is disallowed\n", fullname);
 		return NULL;
@@ -1024,8 +1030,8 @@ set_format(struct adios_group_struct *t,
     for (adios_var = t->vars; adios_var != NULL; adios_var = adios_var->next, fieldNo++) {
 	char *fullname = append_path_name(adios_var->path, adios_var->name);
 	char *mangle_name = flexpath_mangle(fullname);
-
-	for (int i = 0; i < fieldNo; i++) {
+	int i = 0;
+	for (; i < fieldNo; i++) {
 	    if (strcmp(mangle_name, field_list[i].field_name) == 0) {
 		adios_error(err_invalid_group, "set_format:  The Flexpath transport does not allow multiple writes using the same name in a single group, variable %s is disallowed\n", fullname);
 		return NULL;
@@ -1363,6 +1369,12 @@ flush_handler(CManager cm, void* vevent, void* client_data, attr_list attrs)
     Flush_msg* msg = (Flush_msg*) vevent;
     int err = EVtake_event_buffer(cm, vevent);
     fp_verbose(fileData, "flush_msg received and queued\n");
+
+    if (use_sosflow) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "rank %d recv flush_msg from %d", fileData->rank, msg->process_id);
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &msg->id);
+    }
     threaded_enqueue(&fileData->controlQueue, msg, DATA_FLUSH, 
 		     &fileData->controlMutex, &fileData->controlCondition,
 		     -1);
@@ -1426,8 +1438,15 @@ control_thread(void *arg)
 		dataNode = threaded_peek(&fileData->dataQueue, 
 					 &fileData->dataMutex, 
 					 &fileData->dataCondition);
+		char name[22];
+		if (use_sosflow) {
+    		    snprintf(name, sizeof(name), "flush_msg from %d dQed", flushMsg->process_id);
+    		    SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &flushMsg->id);
+		}
 		process_data_flush(fileData, flushMsg, dataNode);
-
+		if (use_sosflow) {
+		    SOS_publish(writerPub);
+		}
 	    }
 	    else if (controlMsg->type==OPEN) {
                 op_msg *open = (op_msg*) controlMsg->data;
@@ -1515,7 +1534,8 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     char *recv_buf;
     char ** recv_buf_ptr = CMCondition_get_client_data(cm, msg->condition);
     recv_buf = (char *)malloc(fileData->numBridges*CONTACT_LENGTH*sizeof(char));
-    for (int i = 0; i < msg->contact_count; i++) {
+    int i = 0;
+    for (; i < msg->contact_count; i++) {
         strcpy(&recv_buf[i*CONTACT_LENGTH], msg->contacts[i]);
     }
     *recv_buf_ptr = recv_buf;
@@ -1565,6 +1585,25 @@ adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method
     EVregister_close_handler(flexpathWriteData.cm, stone_close_handler, &flexpathWriteData);
     CMFormat format = CMregister_simple_format(flexpathWriteData.cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
     CMregister_handler(format, reader_register_handler, NULL);
+
+    if (getenv("SOSFLOW_WRITE")) {
+        use_sosflow = true;
+    	int argc = 9;
+    	char *argv[] = {"writer", "-i", "1", "-m", "1", "-p", "1", "-d", "0"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT -p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
+    	char** myarg = argv;
+   
+    	my_sos = SOS_init( &argc, &myarg, SOS_ROLE_CLIENT, SOS_LAYER_APP);
+    	SOS_SET_CONTEXT(my_sos, "write_flexpath");
+    	srandom(my_sos->my_guid);
+    	writerPub = SOS_pub_create(my_sos, "fl_write", SOS_NATURE_CREATE_OUTPUT);
+    	strcpy (writerPub->prog_ver, "1.0");
+    	writerPub->meta.channel     = 2;
+    	writerPub->meta.nature      = SOS_NATURE_EXEC_WORK;
+    	writerPub->meta.layer       = SOS_LAYER_APP;
+    	writerPub->meta.pri_hint    = SOS_PRI_DEFAULT;
+    	writerPub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
+    	writerPub->meta.retain_hint = SOS_RETAIN_DEFAULT;
+    }
 }
 
 extern int 
@@ -1665,7 +1704,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
     // build a bridge per line
     int numBridges = fileData->numBridges;
     fileData->bridges = malloc(sizeof(FlexpathStone) * numBridges);
-    for (int i = 0; i < numBridges; i++) {
+    for (i = 0; i < numBridges; i++) {
         char in_contact[CONTACT_LENGTH];
         sscanf(&recv_buff[i*CONTACT_LENGTH], "%d:%s",&stone_num, in_contact);
 	//fprintf(stderr, "reader contact: %d:%s\n", stone_num, in_contact);
@@ -2030,6 +2069,10 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 	fileData->finalized = 1;
 	fileData = fileData->next;	    
     }
+    if (use_sosflow) {
+        SOS_finalize(my_sos);
+    }
+
 }
 
 // provides unknown functionality

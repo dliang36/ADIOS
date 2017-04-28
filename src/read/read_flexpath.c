@@ -58,7 +58,10 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+
+SOS_runtime *my_sos;
 SOS_pub *pub;
+bool sos_read = false;
 
 typedef struct _bridge_info
 {
@@ -725,16 +728,15 @@ send_flush_msg(flexpath_reader_file *fp, int destination, Flush_type type, int u
     else
 	msg.condition = -1;
     
-    char name[22];
-    snprintf(name, sizeof(name), "flush_msg from rank %d", fp->rank);
-    printf("%s\n", name);
-    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &destination);
+    /*char name[29];
+    snprintf(name, sizeof(name), "flush_msg from rank %d to %d", fp->rank, destination);
+    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &msg.id);*/
 
     // maybe check to see if the bridge is create first.
     EVsubmit(fp->bridges[destination].flush_source, &msg, NULL);
 
-    SOS_announce(pub);
-    SOS_publish(pub);
+    //SOS_announce(pub);
+    //SOS_publish(pub);
     if (use_condition) {
 	fp_verbose(fp, "WAIT in send_flush_msg\n");
 	CMCondition_wait(fp_read_data->cm, msg.condition);
@@ -993,6 +995,12 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     get_double_attr(attrs, attr_atom_from_string("fp_starttime"), &data_start);
     get_int_attr(attrs, attr_atom_from_string(FP_RANK_ATTR_NAME), &writer_rank);
     get_int_attr(attrs, attr_atom_from_string("fp_flush_id"), &flush_id);
+    
+    char name[27];
+    if (sos_read) {
+	snprintf(name, sizeof(name), "r%d: raw_hdl called w%d", fp->rank, writer_rank);
+    	SOS_pack(pub, name, SOS_VAL_TYPE_INT, &flush_id);
+    }
     /* fprintf(stderr, "\treader rank:%d:got data from writer:%d:step:%d\n", */
     /* 	    fp->rank, writer_rank, fp->mystep); */
     FMContext context = CMget_FMcontext(cm);
@@ -1156,6 +1164,11 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     fp->req.num_completed++;
     /* fprintf(stderr, "\t\treader rank:%d:step:%d:num_completed:%d:num_pending:%d\n", */
     /* 	    fp->rank, fp->mystep, fp->req.num_completed, fp->req.num_pending); */
+    if (sos_read) {
+	char dnName[27];
+	snprintf(dnName, sizeof(dnName), "r%d: raw_hdl done w%d", fp->rank, writer_rank);
+    	SOS_pack(pub, dnName, SOS_VAL_TYPE_INT, &flush_id);
+    }
     if (fp->req.num_completed == fp->req.num_pending) {
 	/* fprintf(stderr, "\t\treader rank:%d:step:%d:signalling_on:%d\n", */
 	/* 	fp->rank, fp->mystep, fp->req.condition); */
@@ -1226,20 +1239,24 @@ adios_read_flexpath_init_method (MPI_Comm comm, PairStruct* params)
     CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader go", reader_go_field_list, sizeof(reader_go_msg));
     CMregister_handler(format, reader_go_handler, NULL);
 
-    int argc = 3;
-    char *argv[] = {"reader", "-i", "1", "-m", "1"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT 
-    //not yet:-p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
-    my_sos = SOS_init( &argc, &argv, SOS_ROLE_CLIENT, SOS_LAYER_APP);
-    SOS_SET_CONTEXT(my_sos, "read_flexpath");
-    srandom(my_sos->my_guid);
-    pub = SOS_pub_create(my_sos, "demo", SOS_NATURE_CREATE_OUTPUT);
-    strcpy (pub->prog_ver, "1.0");
-    pub->meta.channel     = 1;
-    pub->meta.nature      = SOS_NATURE_EXEC_WORK;
-    pub->meta.layer       = SOS_LAYER_APP;
-    pub->meta.pri_hint    = SOS_PRI_DEFAULT;
-    pub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
-    pub->meta.retain_hint = SOS_RETAIN_DEFAULT;
+    if (getenv("SOSFLOW_READ")) {
+        sos_read = true;
+	int argc = 9;
+    	char *argv[] = {"reader", "-i", "1", "-m", "1", "-p", "1", "-d", "0"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT -p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
+    	char** myarg = argv;
+
+    	my_sos = SOS_init( &argc, &myarg, SOS_ROLE_CLIENT, SOS_LAYER_APP);
+    	SOS_SET_CONTEXT(my_sos, "flexpath");
+    	srandom(my_sos->my_guid);
+    	pub = SOS_pub_create(my_sos, "fl_read", SOS_NATURE_CREATE_OUTPUT);
+    	strcpy (pub->prog_ver, "1.0");
+    	pub->meta.channel     = 1;
+    	pub->meta.nature      = SOS_NATURE_EXEC_WORK;
+    	pub->meta.layer       = SOS_LAYER_APP;
+    	pub->meta.pri_hint    = SOS_PRI_DEFAULT;
+    	pub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
+    	pub->meta.retain_hint = SOS_RETAIN_DEFAULT;
+    }
     return 0;
 }
 
@@ -1389,7 +1406,8 @@ adios_read_flexpath_open(const char * fname,
         reader_register.reader_file = (uint64_t) fp;
         reader_register.contact_count = fp->size;
         reader_register.contacts = malloc(fp->size * sizeof(char*));
-	for (int i=0; i<fp->size; i++) {
+	int i = 0;
+	for (; i<fp->size; i++) {
             reader_register.contacts[i] = &recvbuf[i*CONTACT_LENGTH];
 	}
         CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
@@ -1413,7 +1431,8 @@ adios_read_flexpath_open(const char * fname,
         this_side_contact_buffer = malloc(fp->num_bridges*CONTACT_LENGTH);
         MPI_Bcast(this_side_contact_buffer, fp->num_bridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
         fp->bridges = malloc(sizeof(bridge_info) * fp->num_bridges);
-        for (int i = 0; i < fp->num_bridges; i++) {
+        int i = 0;
+	for (; i < fp->num_bridges; i++) {
             int their_stone;
             char in_contact[CONTACT_LENGTH];
             sscanf(&this_side_contact_buffer[i*CONTACT_LENGTH], "%d:%s", &their_stone, in_contact);
@@ -1497,6 +1516,9 @@ int adios_read_flexpath_finalize_method ()
     /* 	    send_finalize_msg(fp, i); */
     /*     } */
     /* } */
+    if (sos_read) {
+        SOS_finalize(my_sos);
+    }
     return 1;
 }
 
@@ -1687,19 +1709,31 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
     	total_sent++;
     		/* fprintf(stderr, "reader rank:%d:flush_data to writer:%d:of:%d:step:%d:batch:%d:total_sent:%d\n", */
     		/* 	fp->rank, sendee, num_sendees, fp->mystep, batchcount, total_sent); */
-    	send_flush_msg(fp, sendee, DATA, 0);
-
+    	char name[22];
+	if (sos_read) {
+	    snprintf(name, sizeof(name), "send from rank %d", fp->rank);
+	    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &sendee);
+	}
+	send_flush_msg(fp, sendee, DATA, 0);
     	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
                 fp->req.num_pending = batchcount;
 
     	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", fp->req.condition, fp->mystep);
-                CMCondition_wait(fp_read_data->cm, fp->req.condition);
+            
+	    if (sos_read) {
+	    	snprintf(name, sizeof(name), "wait on CMCond %d", fp->rank);
+	    	SOS_pack(pub, name, SOS_VAL_TYPE_INT, &sendee);
+	    }
+	    CMCondition_wait(fp_read_data->cm, fp->req.condition);
+	    if (sos_read) {
+	    	SOS_publish(pub);
+    	    }
     	    fp_verbose(fp, "after blocking:%d:step:%d\n", fp->req.condition, fp->mystep);
     	    fp->req.num_completed = 0;
     	    //fp->req.num_pending = 0;
     	    //total_sent = 0;
-                batchcount = 0;
-                fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
+            batchcount = 0;
+            fp->req.condition = CMCondition_get(fp_read_data->cm, NULL);
     	}
 
     }
@@ -1831,8 +1865,8 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
             for (j=0; j<fp->num_bridges; j++) {
                 int destination=0;
                 if (need_writer(fp, j, fpvar->sel, fp->gp, fpvar->varname)==1) {
-		    /* fprintf(stderr, "\t\trank: %d need_writer: %d\n", fp->rank, j); */
-                    uint64_t _pos = 0;
+                    /* fprintf(stderr, "\t\trank: %d need_writer: %d\n", fp->rank, j); */
+		    uint64_t _pos = 0;
                     need_count++;
                     destination = j;
                     global_var *gvar = find_gbl_var(fp->gp->vars, fpvar->varname, fp->gp->num_vars);
@@ -1841,9 +1875,9 @@ adios_read_flexpath_schedule_read_byid(const ADIOS_FILE *adiosfile,
                     displ->pos = pos;
                     _pos *= (uint64_t)fpvar->type_size;
                     pos += _pos;
-
                     all_disp = realloc(all_disp, sizeof(array_displacements)*need_count);
                     all_disp[need_count-1] = *displ;
+		    
                     add_var_to_read_message(fp, j, fpvar->varname);
                 }
             }

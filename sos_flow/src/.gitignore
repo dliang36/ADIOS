@@ -1,0 +1,15 @@
+sosd
+sosd.lock
+sosd.log
+sosd.db
+sosd.*.lock
+sosd.*.db
+sosd.*.log
+runit.log
+demo_app
+sos_cmd
+../output/*
+../bin/*
+*.lo
+*.so
+*.o
