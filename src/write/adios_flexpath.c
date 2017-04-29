@@ -12,11 +12,13 @@
 #include <math.h>
 #include <string.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #include <pthread.h>
 
 // xml parser
 #include <mxml.h>
+#include <cod.h>
 
 // add by Kimmy 10/15/2012
 #include <sys/types.h>
@@ -42,7 +44,6 @@
 
 // // evpath libraries
 #include <evpath.h>
-#include <cod.h>
 #define FLEXPATH_SIDE "WRITER"
 #include "core/flexpath.h"
 #include <sys/queue.h>
@@ -470,6 +471,7 @@ char * multiqueue_action = "{\n\
             int time_req;\n\
             read_msg = EVdata_read_request(0);\n\
             time_req = read_msg->timestep_requested;\n\
+	    fp_verbose(\"Read request received for timestep %d, from reader %d\\n\", time_req, read_msg->process_return_id);\n \
             int j;\n\
             for(j = 0; j < EVcount_anonymous(); j++)\n\
             {\n\
@@ -485,6 +487,7 @@ char * multiqueue_action = "{\n\
                 {\n\
                     int target;\n\
                     target = read_msg->process_return_id;\n\
+		    fp_verbose(\"Data for timestep %d sent to reader %d\\n\", read_msg->timestep_requested, read_msg->process_return_id);\n\
                     EVsubmit_anonymous(target + 1, j);\n\
                     EVdiscard_read_request(i);\n\
                     i--;\n\
@@ -507,6 +510,7 @@ finalize_msg_handler(CManager cm, void *vevent, void *client_data, attr_list att
 
     fp_verbose(fp, "Finalize msg handler called and signalled condition %d!\n", fp->final_condition);
 
+    return 0;
 }
 
 // sets a field based on data type
@@ -1126,17 +1130,38 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     CMCondition_signal(cm, msg->condition);
 }
 
+static void
+fp_verbose_wrapper(char *format, ...)
+{
+    static int fp_verbose_set = -1;
+    static int MPI_rank = -1;
+    if (fp_verbose_set == -1) {
+        fp_verbose_set = (getenv("FLEXPATH_VERBOSE") != NULL);
+        MPI_Comm_rank(MPI_COMM_WORLD, &MPI_rank);
+    }
+    if (fp_verbose_set) {
+        va_list args;
+
+        va_start(args, format);
+        fprintf(stdout, "%s %d:", FLEXPATH_SIDE, MPI_rank);
+        vfprintf(stdout, format, args);
+        va_end(args);
+    }
+}
+
 // Initializes flexpath write local data structures
 extern void 
 adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method) 
 {
+    static cod_extern_entry externs[] = {   {"fp_verbose", (void*) 0},    {NULL, NULL}};
     // global data structure creation
     flexpathWriteData.rank = -1;
     flexpathWriteData.openFiles = NULL;
-
+    externs[0].extern_value = fp_verbose_wrapper;
     // setup CM
     setenv("CMSelfFormats", "1", 1);
     flexpathWriteData.cm = CManager_create();
+    EVadd_standard_routines(flexpathWriteData.cm, "void fp_verbose(string format, ...);",  externs);
     atom_t CM_TRANSPORT = attr_atom_from_string("CM_TRANSPORT");
     char * transport = getenv("CMTransport");
     if (transport == NULL) {
@@ -1173,7 +1198,8 @@ adios_flexpath_open(struct adios_file_struct *fd,
 		    MPI_Comm comm) 
 {    
     struct timeval t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
-    struct timeval t50, t51, t52, t53, t54, t55;
+    struct timeval t60, t61, t62, t63, t64, t65, t66;
+    char* q_action_spec;
     int i;
     if ( fd == NULL || method == NULL) {
         perr("open: Bad input parameters\n");
@@ -1309,19 +1335,13 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     fileData->fm = set_format(t, fields, fileData);
     gettimeofday (&t5, NULL); 
-    gettimeofday (&t50, NULL); 
-
 
     // attach rank attr and add file to open list
     fileData->name = strdup(method->group->name); 
-    gettimeofday (&t51, NULL); 
     add_open_file(fileData);
-    gettimeofday (&t52, NULL); 
     //Template for all other attrs set here
     atom_t rank_atom = attr_atom_from_string(FP_RANK_ATTR_NAME);
-    gettimeofday (&t53, NULL); 
     add_int_attr(fileData->attrs, rank_atom, fileData->rank);   
-    gettimeofday (&t54, NULL); 
 
     //generate multiqueue function that sends formats or all data based on flush msg
 
@@ -1330,16 +1350,18 @@ adios_flexpath_open(struct adios_file_struct *fd,
                                      data_format_list,
 				     NULL};
 
-    gettimeofday (&t55, NULL); 
-
     gettimeofday (&t6, NULL); 
-    char* q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action); 
+    gettimeofday (&t60, NULL); 
+
+    q_action_spec = create_multityped_action_spec(queue_list, multiqueue_action);
+    gettimeofday (&t61, NULL); 
 
 
     fileData->multi_action = EVassoc_multi_action(flexpathWriteData.cm, 
 						  fileData->multiStone, 
 						  q_action_spec, 
 						  NULL);
+    gettimeofday (&t62, NULL); 
     fileData->split_action = EVassoc_split_action(flexpathWriteData.cm, fileData->splitStone, NULL);
 
     fileData->finalize_action = EVassoc_terminal_action(flexpathWriteData.cm, 
@@ -1348,6 +1370,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
                                                         finalize_msg_handler, 
                                                         fileData);
 
+    gettimeofday (&t63, NULL); 
     fileData->dataSource = EVcreate_submit_handle(flexpathWriteData.cm, 
 						  fileData->multiStone, 
 						  fileData->fm->format);						 
@@ -1373,6 +1396,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 	
     //Set each output to the rank + 1 and preserve the 0 output for a sink stone just in case
     //we need it for control one day
+    gettimeofday (&t64, NULL); 
     for (i = 0; i < numBridges; i++) {
 	fileData->bridges[i].myNum = 
 	    EVcreate_bridge_action(
@@ -1386,6 +1410,7 @@ adios_flexpath_open(struct adios_file_struct *fd,
 			    i+1, 
 			    fileData->bridges[i].myNum);
     }
+    gettimeofday (&t65, NULL); 
 
     //Set up split stone
     for(i = 0; i < fileData->num_readers_to_inform; ++i)
@@ -1396,12 +1421,12 @@ adios_flexpath_open(struct adios_file_struct *fd,
                                   fileData->split_action, 
                                   fileData->bridges[fileData->readers_to_inform_ranks[i]].myNum);
     }
-    gettimeofday (&t6, NULL); 
+    gettimeofday (&t66, NULL); 
 
+    gettimeofday (&t7, NULL); 
     FMContext my_context = create_local_FMcontext();
     fileData->fm->ioFormat = register_data_format(my_context, fileData->fm->format);
 
-    gettimeofday (&t7, NULL); 
     //Set this up here so that the reader can close without waiting for the end of the stream
     fileData->final_condition = CMCondition_get(flexpathWriteData.cm, NULL);
     
@@ -1426,18 +1451,19 @@ adios_flexpath_open(struct adios_file_struct *fd,
 
     if(fileData->verbose) {
         struct timeval diff1, diff2, diff3, diff4, diff5, diff6, diff7, diff8, diff9;
-        struct timeval diff51, diff52, diff53, diff54, diff55;
+        struct timeval diff61, diff62, diff63, diff64, diff65, diff66;
         dump_diff(0, 1);
         dump_diff(1, 2);
         dump_diff(2, 3);
         dump_diff(3, 4);
         dump_diff(4, 5);
         dump_diff(5, 6);
-        dump_diff(50, 51);
-        dump_diff(51, 52);
-        dump_diff(52, 53);
-        dump_diff(53, 54);
-        dump_diff(54, 55);
+        dump_diff(60, 61);
+        dump_diff(61, 62);
+        dump_diff(62, 63);
+        dump_diff(63, 64);
+        dump_diff(64, 65);
+        dump_diff(65, 66);
         dump_diff(6, 7);
         dump_diff(7, 8);
         dump_diff(8, 9);
@@ -1712,15 +1738,19 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
     memcpy(buffer, fileData->fm->buffer, fileData->fm->size);
 
     //Submit the messages that will get forwarded on immediately to the designated readers through split stone
+    fp_verbose(fileData, " adios_flexpath_close, submit group msg\n");
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
+    fp_verbose(fileData, " adios_flexpath_close, submit scalars\n");
     EVsubmit_general(fileData->scalarDataSource, temp, free_data_buffer, temp_attr_scalars);
 
     //Full data is submitted to multiqueue stone
+    fp_verbose(fileData, " adios_flexpath_close, submit full data\n");
     EVsubmit_general(fileData->dataSource, buffer, free_data_buffer, temp_attr_noscalars);
 
     free_attr_list(temp_attr_scalars);
     free_attr_list(temp_attr_noscalars);
     fileData->writerStep++;
+    fp_verbose(fileData, " adios_flexpath_close exit\n");
 }
 
 // wait until all open files have finished sending data to shutdown
