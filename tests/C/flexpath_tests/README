@@ -1,0 +1,28 @@
+In order to build with sosflow, please add the following option when running ./configure: --with-sosflow=yourSosflowBuildDir.
+
+In order to enable sosflow, please set environment variable SOSFLOW_READ to 1 for reader side and/or SOSFLOW_WRITE to 1 for writer side.
+
+Basic usage and concept of latest SOSflow is documented by the Author here: https://github.com/cdwdirect/sos_flow/blob/master/README.md
+
+To run ADIOS with sosflow on a Linux machine, please first source hosts/linux/setenv.sh. This will set the necessary environment variables, e.g. ports used by sosflow and SOS_ROOT. The db containing results will be in this SOS_ROOT. Bash is the shell needed to run this command.
+
+To start the sosd, please run ./scripts/mpi.start.2 &
+Please note that previous dbs in the same directory would be overwritten when this is run.
+
+Now you can go back to ADIOS directory and run the tests.
+
+
+For current codes, the best way to see the result is run the following query after opening the .db file with sqlite3:
+select tblVals.guid, val, time_pack, time_send, name from tblVals join tblData on tblVals.guid = tblData.guid;
+We usually pay more attention to time_pack, instead of time_send, and actually avoid to use SOS_publish as the "verbose" since the "send" can be triggered by any SOS_publish using the same pub. So it will be hard to tell who indeed reaches SOS_publish.
+
+sqlite cheat sheet:
+(If you would like read the results right in the terminal, you might need this)
+aligned by column:
+.mode column
+
+show column names:
+.header on
+
+
+Note for future modification: SOSflow seems to have a restriction on name length. So it will be better to pack a string as value and put infos there.

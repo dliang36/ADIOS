@@ -172,6 +172,10 @@ typedef struct _flexpath_write_data {
     CManager cm;
 } FlexpathWriteData;
 
+SOS_runtime *my_sos;
+SOS_pub *writerPub;
+bool sosflow_write = false;
+
 /************************* Global Variable Declarations *************************/
 // used for sanitizing names
 #define OPLEN 7
@@ -509,7 +513,12 @@ finalize_msg_handler(CManager cm, void *vevent, void *client_data, attr_list att
     CMCondition_signal(flexpathWriteData.cm, fp->final_condition);
 
     fp_verbose(fp, "Finalize msg handler called and signalled condition %d!\n", fp->final_condition);
-
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "Sgnled cond %d in finalize msg hdl", fp->final_condition);
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fp->rank);
+	SOS_publish(writerPub);
+    }
     return 0;
 }
 
@@ -1117,6 +1126,13 @@ reader_register_handler(CManager cm, CMConnection conn, void *vmsg, void *client
     char ** recv_buf_ptr = CMCondition_get_client_data(cm, msg->condition);
     recv_buf = (char *)calloc(fileData->numBridges, CONTACT_LENGTH);
     fp_verbose(fileData, "Reader Register handler called!\n");
+
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "Reader Reg hdlr called");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	SOS_publish(writerPub);
+    }
     int total_num_readers;
     fileData->total_num_readers = msg->contact_count;
     for (i = 0; i < msg->contact_count; i++) {
@@ -1190,6 +1206,25 @@ adios_flexpath_init(const PairStruct *params, struct adios_method_struct *method
     EVregister_close_handler(flexpathWriteData.cm, stone_close_handler, &flexpathWriteData);
     CMFormat format = CMregister_simple_format(flexpathWriteData.cm, "Flexpath reader register", reader_register_field_list, sizeof(reader_register_msg));
     CMregister_handler(format, reader_register_handler, NULL);
+
+    if (getenv("SOSFLOW_WRITE")) {
+        sosflow_write = true;
+    	int argc = 9;
+    	char *argv[] = {"writer", "-i", "1", "-m", "1", "-p", "1", "-d", "0"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT -p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)
+    	char** myarg = argv;
+   
+    	my_sos = SOS_init( &argc, &myarg, SOS_ROLE_CLIENT, SOS_LAYER_APP);
+    	SOS_SET_CONTEXT(my_sos, "write_flexpath");
+    	srandom(my_sos->my_guid);
+    	writerPub = SOS_pub_create(my_sos, "fl_write", SOS_NATURE_CREATE_OUTPUT);
+    	strcpy (writerPub->prog_ver, "1.0");
+    	writerPub->meta.channel     = 2;
+    	writerPub->meta.nature      = SOS_NATURE_EXEC_WORK;
+    	writerPub->meta.layer       = SOS_LAYER_APP;
+    	writerPub->meta.pri_hint    = SOS_PRI_DEFAULT;
+    	writerPub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
+    	writerPub->meta.retain_hint = SOS_RETAIN_DEFAULT;
+    }
 }
 
 extern int 
@@ -1256,6 +1291,12 @@ adios_flexpath_open(struct adios_file_struct *fd,
         CONTACT_LENGTH, MPI_CHAR, 0, (fileData->mpiComm));
 
     fp_verbose(fileData, "Gather of writer contact data to rank 0 is complete\n");
+    if (sosflow_write) {
+    	char name[29];
+	int res = 200;
+    	snprintf(name, sizeof(name), "Writer contact gather complete");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &res);
+    }
     //TODO: recv_buff has a small memory leak here because of register_reader_handler
     // rank 0 prints contact info to file
     if (fileData->rank == 0) {
@@ -1739,18 +1780,42 @@ adios_flexpath_close(struct adios_file_struct *fd, struct adios_method_struct *m
 
     //Submit the messages that will get forwarded on immediately to the designated readers through split stone
     fp_verbose(fileData, " adios_flexpath_close, submit group msg\n");
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "submit group msg in close");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	SOS_publish(writerPub);
+    }
     EVsubmit_general(fileData->offsetSource, gp, NULL, temp_attr_scalars);
     fp_verbose(fileData, " adios_flexpath_close, submit scalars\n");
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "submit scalars in close");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	SOS_publish(writerPub);
+    }
     EVsubmit_general(fileData->scalarDataSource, temp, free_data_buffer, temp_attr_scalars);
 
     //Full data is submitted to multiqueue stone
     fp_verbose(fileData, " adios_flexpath_close, submit full data\n");
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "submit full data in close");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	SOS_publish(writerPub);
+    }
     EVsubmit_general(fileData->dataSource, buffer, free_data_buffer, temp_attr_noscalars);
 
     free_attr_list(temp_attr_scalars);
     free_attr_list(temp_attr_noscalars);
     fileData->writerStep++;
     fp_verbose(fileData, " adios_flexpath_close exit\n");
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "exit close");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	SOS_publish(writerPub);
+    }
 }
 
 // wait until all open files have finished sending data to shutdown
@@ -1759,6 +1824,12 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 {
     FlexpathWriteFileData* fileData = flexpathWriteData.openFiles;
     fp_verbose(fileData, "adios_flexpath_finalize called\n");
+    if (sosflow_write) {
+    	char name[29];
+    	snprintf(name, sizeof(name), "adios_finalize called");
+	SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	SOS_publish(writerPub);
+    }
     //fileData->attrs = set_timestep_atom(fileData->attrs, fileData->writerStep);
     while(fileData) {
         finalize_close_msg end_msg;
@@ -1770,16 +1841,30 @@ adios_flexpath_finalize(int mype, struct adios_method_struct *method)
 
         fp_verbose(fileData, "Num_readers_to_inform: %d\n", fileData->num_readers_to_inform);
 
+	if (sosflow_write) {
+    	    char name[29];
+    	    snprintf(name, sizeof(name), "readers to inform: %d", fileData->num_readers_to_inform);
+	    SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	    SOS_publish(writerPub);
+	}
         /*TODO:Very Bad!!! This means that our finalization is not going to be able to 
                differentiate between streams...but the API doesn't support that yet, so...*/
         fp_verbose(fileData, "Waiting on condition %d for the reader to be done!\n", fileData->final_condition);
         CMCondition_wait(flexpathWriteData.cm, fileData->final_condition);
         fp_verbose(fileData, "Finished Wait for reader cohort to be finished!\n");
+	if (sosflow_write) {
+    	    char name[29];
+    	    snprintf(name, sizeof(name), "Finished Wait for readers in finalize");
+	    SOS_pack(writerPub, name, SOS_VAL_TYPE_INT, &fileData->rank);
+	    SOS_publish(writerPub);
+	}
 
 	fileData->finalized = 1;
 	fileData = fileData->next;	    
     }
-
+    if (sosflow_write) {
+	SOS_finalize(my_sos);
+    }
     //fp_verbose(fileData, "Finished all waits! Exiting finalize method now!\n");
 
 }

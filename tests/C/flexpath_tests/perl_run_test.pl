@@ -20,9 +20,7 @@ if($opt_v == 1)
 }
 
 ## Determine what tests we should run by looking in the current directory for a specific pattern
-#my @files = `ls`;
-#my @files = ("reader_global_range_select.c");
-my @files = ("reader_maya_noxml.c");
+my @files = `ls`;
 my @groups = ();
 foreach (@files)
 {

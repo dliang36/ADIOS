@@ -1868,7 +1868,7 @@ adios_read_flexpath_init_method (MPI_Comm comm, PairStruct* params)
     CMFormat format = CMregister_simple_format(fp_read_data->cm, "Flexpath reader go", reader_go_field_list, sizeof(reader_go_msg));
     CMregister_handler(format, reader_go_handler, NULL);
 
-    if (getenv("USE_SOSFLOW")) {
+    if (getenv("SOSFLOW_READ")) {
 	use_sosflow = true;
     	int argc = 9;
     	char *argv[] = {"reader", "-i", "1", "-m", "1", "-p", "1", "-d", "0"};  // -i ITERATION_SIZE, -m MAX_SEND_COUNT -p PUB_ELEM_COUNT -d DELAY_IN_USEC (DELAY_ENABLED = 1)

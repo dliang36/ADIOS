@@ -3,8 +3,8 @@
 
 
 #include "core/adios_logger.h"
-#include "/net/hu21/dliang36/SP/sos_flow/src/sos.h"
-
+//#include "/net/hu21/dliang36/SP/sos_flow/src/sos.h"
+#include "sos.h"
 #define CONTACT_LENGTH 1024
 
 #define READER_CONTACT_FILE "reader_info.txt"
