@@ -174,6 +174,10 @@ typedef struct _flexpath_write_data {
     CManager cm;
 } FlexpathWriteData;
 
+SOS_runtime *my_sos;
+SOS_pub *writerPub;
+bool use_sosflow = false;
+
 /************************* Global Variable Declarations *************************/
 // used for sanitizing names
 #define OPLEN 7
@@ -182,11 +186,6 @@ static char *opRepList[OPLEN] = { "_plus_", "_minus_", "_mult_", "_div_", "_dot_
 
 // used for global communication and data structures
 FlexpathWriteData flexpathWriteData;
-
-SOS_runtime *my_sos;
-SOS_pub *writerPub;
-bool use_sosflow = false;
-
 
 /**************************** Function Definitions *********************************/
 
