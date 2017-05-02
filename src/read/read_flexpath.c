@@ -2004,6 +2004,11 @@ adios_read_flexpath_open(const char * fname,
         char *contact_info;
 	recvbuf = (char*)malloc(sizeof(char)*CONTACT_LENGTH*(fp->size));
         fp_verbose(fp, "Running MPI_Gather for reader contact information!\n");
+	if (use_sosflow) {
+	    char name[40];
+    	    snprintf(name, sizeof(name), "Running MPI_Gather for reader contact");
+	    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+	}
         MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
                    CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
 
@@ -2044,6 +2049,11 @@ adios_read_flexpath_open(const char * fname,
 
         // broadcast writer contact info to all reader ranks
         fp_verbose(fp, "Broadcasting writer data to all ranks!\n");
+        if (use_sosflow) {
+            char name[29];
+            snprintf(name, sizeof(name), "Brdcsting writer data");
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+        }
         MPI_Bcast(&fp->num_bridges, 1, MPI_INT, 0, MPI_COMM_WORLD);
         
         MPI_Bcast(send_buffer, fp->num_bridges*CONTACT_LENGTH, MPI_CHAR, 0, MPI_COMM_WORLD);
@@ -2067,9 +2077,20 @@ adios_read_flexpath_open(const char * fname,
 
         /* wait for "go" from writer */
         fp_verbose(fp, "waiting for go message in read_open, WAITING, condition %d\n", fp->go_cond.condition);
+	if (use_sosflow) {
+            char name[40];
+            snprintf(name, sizeof(name), "waiting for GO in read_open cond:%d", fp->go_cond.condition);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+        }
+
         CMCondition_wait(fp_read_data->cm, fp->go_cond.condition);
         fp_verbose(fp, "finished wait for go message in read_open\n");
-        //Cleanup
+	if (use_sosflow) {
+            char name[40];
+            snprintf(name, sizeof(name), "finished wait for GO in read_open");
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+        }
+	//Cleanup
         free(send_buffer);
         free(reader_register.contacts);
 	free(recvbuf);
@@ -2080,6 +2101,12 @@ adios_read_flexpath_open(const char * fname,
     } else {
         /* not rank 0 */
         fp_verbose(fp, "About to run the normal setup for bridges before MPI_Gather operation!\n");
+        if (use_sosflow) {
+            char name[40];
+            snprintf(name, sizeof(name), "About to setup bridges in rank %d", fp->rank);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+        }
+
         char *this_side_contact_buffer;
         MPI_Gather(data_contact_info, CONTACT_LENGTH, MPI_CHAR, recvbuf,
                    CONTACT_LENGTH, MPI_CHAR, 0, fp->comm);
@@ -2100,6 +2127,12 @@ adios_read_flexpath_open(const char * fname,
         }
         MPI_Barrier(MPI_COMM_WORLD);
         fp_verbose(fp, "Past the MPI_Barrier on the non-root side\n");
+	if (use_sosflow) {
+            char name[29];
+            snprintf(name, sizeof(name), "Passed MPI_Barrier in rank %d", fp->rank);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+        }
+
     }
 
 
@@ -2108,13 +2141,23 @@ adios_read_flexpath_open(const char * fname,
 
     fp_verbose(fp, "About to lock mutex and access timstep_separated_var_list\n");
     // requesting initial data.
-    
+    if (use_sosflow) {
+        char name[40];
+        snprintf(name, sizeof(name), "Wait on timestep %d in rank %d", fp->mystep, fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+    }
+
     fp_verbose(fp, "Waiting on timestep %d\n", fp->mystep);
     flexpath_wait_for_global_metadata(fp, fp->mystep);
 
     //Fix the last of the info the reader will need
     fp_verbose(fp, "Reader now has all of the information to begin scheduling reads for the first timestep\n");
-    
+    if (use_sosflow) {
+        char name[29];
+        snprintf(name, sizeof(name), "Rank %d has all info", fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+    }
+
     fp->data_read = 0;
 
 
@@ -2318,15 +2361,24 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
 	total_sent++;
 
 	if ((total_sent % FP_BATCH_SIZE == 0) || (total_sent == num_sendees)) {
-	    /*snprintf(name, sizeof(name), "wait on CMCond %d", fp->rank);
-	    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->sendees[i]);*/
-	    
-	    fp_verbose(fp, "in perform_reads, blocking on:%d:step:%d\n", curr_var_list->req_cond.condition, fp->mystep);
+	    fp_verbose(fp, "rank%d perform_reads, blocking on:%d:step:%d\n", fp->rank, curr_var_list->req_cond.condition, fp->mystep);
+	    if (use_sosflow) {
+            	char name[50];
+            	snprintf(name, sizeof(name), "in perform_reads, blocking on:%d:step:%d", curr_var_list->req_cond.condition, fp->mystep);
+            	SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+            }
+
             CMCondition_wait(fp_read_data->cm, curr_var_list->req_cond.condition);
 	    /*snprintf(name, sizeof(name), "done CMCond %d", fp->rank);	 
 	    SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->sendees[i]);
 	    SOS_publish(pub);*/
 	    fp_verbose(fp, "after blocking:%d:step:%d\n", curr_var_list->req_cond.condition, fp->mystep);
+	    if (use_sosflow) {
+                char name[40];
+                snprintf(name, sizeof(name), "rank%d after blocking:%d:step:%d", fp->rank, curr_var_list->req_cond.condition, fp->mystep);
+                SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+		SOS_publish(pub);
+            }
 	    curr_var_list->req_cond.num_completed = 0;
             curr_var_list->req_cond.condition = CMCondition_get(fp_read_data->cm, NULL);
             int amount_left = num_sendees - total_sent;
@@ -2335,7 +2387,6 @@ int adios_read_flexpath_perform_reads(const ADIOS_FILE *adiosfile, int blocking)
                 curr_var_list->req_cond.num_pending = amount_left < FP_BATCH_SIZE ? amount_left : FP_BATCH_SIZE;
             }
 	}
-
     }
 
     //Immediate_cleanup of sendee information
