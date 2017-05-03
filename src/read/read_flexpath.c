@@ -1305,13 +1305,13 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     if (fp->group_name == NULL) {
         fp->group_name = strdup(msg->group_name);
     }
-    char name[22];
+    /*char name[22];
     int grp = 555;
     if (use_sosflow) {
         snprintf(name, sizeof(name), "grp msg rank %d", fp->rank);
         SOS_pack(pub, name, SOS_VAL_TYPE_INT, &grp);
 	SOS_publish(pub);
-    }
+    }*/
     pthread_mutex_lock(&(fp->queue_mutex));
     global_metadata_ptr curr = fp->global_info;
     while(curr && curr->next)
@@ -1364,11 +1364,11 @@ group_msg_handler(CManager cm, void *vevent, void *client_data, attr_list attrs)
     
     pthread_mutex_unlock(&(fp->queue_mutex));
 
-    if (use_sosflow) {
+    /*if (use_sosflow) {
         snprintf(name, sizeof(name), "grp msg unl %d", fp->rank);
         SOS_pack(pub, name, SOS_VAL_TYPE_INT, &grp);
 	SOS_publish(pub);
-    }
+    }*/
     return 0;
 }
 
@@ -1560,11 +1560,10 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
         fp_verbose(fp, "Setting up initial vars!\n");
 	int var_count = 0;
 
-	int rawH = 888;
-        char name[22]; 
         if (use_sosflow) {
+            char name[22]; 
             snprintf(name, sizeof(name), "rawH rank %d", fp->rank);
-            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
 	    SOS_publish(pub);
 	}
         pthread_mutex_lock(&(fp->queue_mutex));
@@ -1573,11 +1572,11 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	ts_var_list->var_list = setup_flexpath_vars(f, &var_count);
         pthread_mutex_unlock(&(fp->queue_mutex));
 
-        if (use_sosflow) {
+        /*if (use_sosflow) {
             snprintf(name, sizeof(name), "rawH unl %d", fp->rank);
             SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
 	    SOS_publish(pub);
-	}
+	}*/
 	adiosfile->var_namelist = malloc(var_count * sizeof(char *));
 	
 	int i = 0;
@@ -1602,18 +1601,17 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
 	char *unmangle = flexpath_unmangle(f->field_name);
 	char *dims[100]; /* more than we should ever need */
 
-	int rawH = 22;
-	char name[22]; 
-        if (use_sosflow) {
-	    snprintf(name, sizeof(name), "rawH fld %d", fp->rank);
-            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
-	    SOS_publish(pub);
-	}
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_separated_lists * ts_var_list = find_var_list(fp, timestep);
         if(ts_var_list == NULL)
         {
             fp_verbose(fp, "Created timestep in raw handler -- timestep:%d\n", timestep);
+            if (use_sosflow) {
+		char name[30]; 
+	    	snprintf(name, sizeof(name), "rawH created tstep:%d rank:%d", timestep, fp->rank);
+            	SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+	    	SOS_publish(pub);
+	    }
             create_flexpath_var_for_timestep(fp, timestep);
             ts_var_list = find_var_list(fp, timestep);
         }
@@ -1621,11 +1619,11 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
         pthread_mutex_unlock(&(fp->queue_mutex));
         free(unmangle);
 
-        if (use_sosflow) {
+        /*if (use_sosflow) {
             snprintf(name, sizeof(name), "fld ulk %d", fp->rank);
             SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
 	    SOS_publish(pub);
-	}
+	}*/
     	if (!var) {
     	    adios_error(err_file_open_error,
     			"file not opened correctly.  var does not match format.\n");
@@ -1773,6 +1771,12 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
         fp_verbose(fp, "Reporting received data for timestep:%d from writer %d\n", timestep, writer_rank);
         curr_var_list->req_cond.num_completed++;
         fp_verbose(fp, "Received data message!  (%d of %d)\n", curr_var_list->req_cond.num_completed, curr_var_list->req_cond.num_pending);
+        if (use_sosflow) {
+	    char name[35]; 
+            snprintf(name, sizeof(name), "Rcvd data msg (%d of %d) rank:%d", curr_var_list->req_cond.num_completed, curr_var_list->req_cond.num_pending, fp->rank);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+	    SOS_publish(pub);
+	}
         /* fprintf(stderr, "\t\treader rank:%d:step:%d:num_completed:%d:num_pending:%d\n", */
         /* 	    fp->rank, fp->mystep, fp->req.num_completed, fp->req.num_pending); */
         if (curr_var_list->req_cond.num_completed == curr_var_list->req_cond.num_pending) {
@@ -1784,25 +1788,24 @@ raw_handler(CManager cm, void *vevent, int len, void *client_data, attr_list att
     }
     else
     {
-	int rawH = 999;
-	char name[22]; 
+        fp_verbose(fp, "Only scalars message received for timestep:%d from writer %d\n", timestep, writer_rank);
         if (use_sosflow) {
-            snprintf(name, sizeof(name), "onlyScl %d", fp->rank);
-            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
+	    char name[50]; 
+            snprintf(name, sizeof(name), "Only sclrs msg rcvd tstep:%d wrtr:%d rank:%d", timestep, writer_rank, fp->rank);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
 	    SOS_publish(pub);
 	}
-        fp_verbose(fp, "Only scalars message received for timestep:%d from writer %d\n", timestep, writer_rank);
         pthread_mutex_lock(&(fp->queue_mutex));
         timestep_separated_lists * ts_var_list = find_var_list(fp, timestep);
         ts_var_list->is_list_filled = 1;
         pthread_cond_signal(&(fp->queue_condition));
         pthread_mutex_unlock(&(fp->queue_mutex));
         
-        if (use_sosflow) {
+        /*if (use_sosflow) {
 	snprintf(name, sizeof(name), "onlyScl ulk %d", fp->rank);
         SOS_pack(pub, name, SOS_VAL_TYPE_INT, &rawH);
 	SOS_publish(pub);
-	}
+	}*/
     }
 
     FMfree_struct_list(struct_list);
@@ -1887,9 +1890,9 @@ adios_read_flexpath_init_method (MPI_Comm comm, PairStruct* params)
     	pub->meta.scope_hint  = SOS_SCOPE_DEFAULT;
     	pub->meta.retain_hint = SOS_RETAIN_DEFAULT;
     
-	char name[22]; 
+	/*char name[22]; 
         snprintf(name, sizeof(name), "inited");
-        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &argc);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp_read_data->rank);*/
     }
     return 0;
 }
@@ -2210,21 +2213,21 @@ void adios_read_flexpath_release_step(ADIOS_FILE *adiosfile) {
     //MPI_Barrier(fp->comm);
     //fp_verbose(fp, "done with flexpath_release step barrier\n");
 
-    char name[22]; 
+    /*char name[22]; 
     if (use_sosflow) {
         snprintf(name, sizeof(name), "rls in rank %d", fp->rank);
         SOS_pack(pub, name, SOS_VAL_TYPE_INT, &i);
 	SOS_publish(pub);
-    }
+    }*/
     pthread_mutex_lock(&(fp->queue_mutex));
     remove_relevant_global_data(fp, fp->mystep);
     pthread_mutex_unlock(&(fp->queue_mutex));
 
-    if (use_sosflow) {
+    /*if (use_sosflow) {
         snprintf(name, sizeof(name), "rls unlck rank %d", fp->rank);
         SOS_pack(pub, name, SOS_VAL_TYPE_INT, &i);
 	SOS_publish(pub);
-    }
+    }*/
     fp->current_global_info = NULL;
 
     pthread_mutex_lock(&(fp->queue_mutex));
@@ -2257,6 +2260,12 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     if(fp->last_writer_step == fp->mystep)
     {
         fp_verbose(fp, "Received the writer_finalized message! Reader returning err_end_of_stream!\n");
+    	if (use_sosflow) {
+	    char name[29]; 
+            snprintf(name, sizeof(name), "Rcv wrtr_finalized in rank:%d", fp->rank);
+            SOS_pack(pub, name, SOS_VAL_TYPE_INT, &last);
+	    SOS_publish(pub);
+        }
         adios_errno = err_end_of_stream;
         return err_end_of_stream;
     }
@@ -2273,6 +2282,12 @@ adios_read_flexpath_advance_step(ADIOS_FILE *adiosfile, int last, float timeout_
     }
     fp_verbose(fp, "Cleaned the global data and the flexpath vars!\n"
                     "Global metadata removed: %d\t\tFlexpath vars removed: %d\n", global_data_cleaned, flexpath_var_cleaned);
+    if (use_sosflow) {
+	char name[22]; 
+        snprintf(name, sizeof(name), "Glb metadata rm:%d FpVars rm:%d rank:%d", global_data_cleaned, flexpath_var_cleaned, fp->rank);
+        SOS_pack(pub, name, SOS_VAL_TYPE_INT, &fp->rank);
+	SOS_publish(pub);
+    }
     pthread_mutex_unlock(&(fp->queue_mutex));
 
     //Fix the last of the info the reader will need, this locks and unlocks the mutex so that's why we have it out here

@@ -25,4 +25,4 @@ show column names:
 .header on
 
 
-Note for future modification: SOSflow seems to have a restriction on name length. So it will be better to pack a string as value and put infos there.
+Note for future modification: sqlite only displays certain part of a string (e.g. first 28 chars in column mode) by default and I have not found a way to change it. So it will be better to pack a string as value and put some info there, rather than having everything in name.
